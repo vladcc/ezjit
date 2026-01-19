@@ -1,0 +1,11 @@
+// <version>
+unsigned int ezj_major_ver(void)
+{
+	return 1;
+}
+
+unsigned int ezj_minor_ver(void)
+{
+	return 0;
+}
+// </version>

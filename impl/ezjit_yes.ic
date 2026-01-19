@@ -1,0 +1,458 @@
+typedef unsigned int uint;
+typedef unsigned char byte;
+
+// <private>
+typedef struct code_buff {
+	byte * buff;
+	size_t pos;
+} code_buff;
+
+typedef struct compile_unit {
+	ezj_ir_instr * instr;
+	code_buff * cb;
+} compile_unit;
+
+#include "arch/ezjit_arch.ic"
+#include <string.h>
+
+#define MAX_TBL_SZ_BYTES (EZJ_FN_TBL_MAX_LEN * sizeof(ezj_void_fn))
+
+static byte yes_get_min_bmag(byte itype, iptr dist)
+{
+	byte min_bmag = PEZJ_BMAG_ABS;
+	switch (itype)
+	{
+		case PEZJ_IR_NONE   : goto none;
+		case PEZJ_IR_INSTR  : goto none;
+		case PEZJ_IR_UJMP   : {
+			if (arch_is_in_range_ujmp_near(dist))
+				min_bmag = PEZJ_BMAG_NEAR;
+			else if (arch_is_in_range_ujmp_far(dist))
+				min_bmag = PEZJ_BMAG_FAR;
+		} break;
+		case PEZJ_IR_CJMP   : {
+			if (arch_is_in_range_cjmp_near(dist))
+				min_bmag = PEZJ_BMAG_NEAR;
+			else if (arch_is_in_range_cjmp_far(dist))
+				min_bmag = PEZJ_BMAG_FAR;
+		} break;
+		case PEZJ_IR_CALL   : {
+			if (arch_is_in_range_call_near(dist))
+				min_bmag = PEZJ_BMAG_NEAR;
+			else if (arch_is_in_range_call_far(dist))
+				min_bmag = PEZJ_BMAG_FAR;
+		} break;
+		case PEZJ_IR_RET    : goto none;
+		case PEZJ_IR_FINISH : goto none;
+		default             : goto none;
+	}
+	return min_bmag;
+
+none:
+	return PEZJ_BMAG_NONE;
+}
+
+static inline void yes_resolve_call_target_size(ezj_ir_instr * instr)
+{
+	pezj_instr_set_call_target_size(
+		instr,
+		pezj_instr_is_call_target(instr) * SZ_CALL_TARGET
+	);
+}
+
+static byte yes_find_min_instr_fn_call(ezj_ir_instr * instr, iptr dist)
+{
+	static const byte instr_fn_call_size[PEZJ_BMAG_END] = {
+		0, SZ_INSTR_FN_CALL_NEAR, SZ_INSTR_FN_CALL_FAR, SZ_INSTR_FN_CALL_ABS
+	};
+
+	byte decl_bmag = pezj_instr_get_bmag_decl_instr_fn_call(instr);
+	byte disc_bmag = yes_get_min_bmag((byte)PEZJ_IR_CALL, dist);
+	byte size = 0;
+
+	// can't have a smaller bmag than declared
+	if (disc_bmag < decl_bmag)
+		disc_bmag = decl_bmag;
+	size = instr_fn_call_size[disc_bmag];
+
+	pezj_instr_set_bmag_disc_instr_fn_call(instr, (pezj_bmag)disc_bmag);
+	pezj_instr_set_size_instr_fn_call(instr, size);
+	return size;
+}
+
+static byte yes_find_min_post_call_branch(ezj_ir_instr * instr, iptr dist)
+{
+	static const byte post_call_sz_tbl[PEZJ_IR_END][PEZJ_BMAG_END] = {
+	{0,              0,                  0,                 0               },
+	{0,              0,                  0,                 0               },
+	{0,              SZ_UJMP_POST_NEAR,  SZ_UJMP_POST_FAR,  SZ_UJMP_POST_ABS},
+	{0,              SZ_CJMP_POST_NEAR,  SZ_CJMP_POST_FAR,  SZ_CJMP_POST_ABS},
+	{0,              SZ_CALL_POST_NEAR,  SZ_CALL_POST_FAR,  SZ_CALL_POST_ABS},
+	{SZ_RET_POST,    SZ_RET_POST,        SZ_RET_POST,       SZ_RET_POST     },
+	{SZ_FINISH_POST, SZ_FINISH_POST,     SZ_FINISH_POST,    SZ_FINISH_POST  },
+	};
+
+	byte itype = pezj_instr_get_ir_type(instr);
+	byte decl_bmag = pezj_instr_get_bmag_decl_post_call_branch(instr);
+	byte disc_bmag = yes_get_min_bmag(itype, dist);
+	byte size = 0;
+
+	// can't have a smaller bmag than declared
+	if (disc_bmag < decl_bmag)
+		disc_bmag = decl_bmag;
+	size = post_call_sz_tbl[itype][disc_bmag];
+
+	pezj_instr_set_bmag_disc_post_call_branch(instr, (pezj_bmag)disc_bmag);
+	pezj_instr_set_size_post_call_branch(instr, size);
+	return size;
+}
+
+static inline uptr yes_get_instr_fn_call_dest(
+	const ezj_ir_instr * instr,
+	const ezj_fn_tbl * fn_tbl
+)
+{
+	return (uptr)pezj_fn_tbl_get_entry(
+		fn_tbl,
+		pezj_instr_get_fn_tbl_entry(instr)
+	);
+}
+
+static bool yes_instr_sizes_init(
+	ezj_ir * ir,
+	const ezj_fn_tbl * fn_tbl,
+	uptr base
+)
+{
+	ezj_ir_instr * instr = NULL;
+	uint offs = CODE_START;
+	uint old_offs = CODE_START;
+	uint instr_total_sz = 0;
+	uptr src = 0;
+	uptr dest = 0;
+	iptr distance = 0;
+	uint end = pezj_ir_get_len(ir);
+	for (uint i = 0; i < end; ++i)
+	{
+		instr = pezj_ir_get_instr(ir, i);
+		instr_total_sz = 0;
+
+		pezj_instr_set_offs_in_code(instr, offs);
+		yes_resolve_call_target_size(instr);
+		instr_total_sz += pezj_instr_get_call_target_size(instr);
+
+		// discover bmags
+		// instr fn call bmag will almost never change after initial discovery
+		// this will avoid O(n*n) offs adjustments
+		dest = yes_get_instr_fn_call_dest(instr, fn_tbl);
+		src = base + offs + instr_total_sz;
+		distance = (iptr)(dest - src);
+		instr_total_sz += yes_find_min_instr_fn_call(instr, distance);
+
+		if (pezj_instr_has_post_branch(instr))
+		{
+			// backward branches can be calculated
+			// for forward branches assume best case for smallest size
+			// most post call branches will most likely not be far away
+			// this will avoid ~O(n*post-call-branches)
+			distance = 0;
+			if (pezj_instr_get_jmp_offs(instr) < 0)
+			{
+				dest = (uptr)pezj_instr_get_offs_of_target(instr);
+				src = offs + instr_total_sz;
+				distance = (iptr)(dest - src);
+			}
+			instr_total_sz += yes_find_min_post_call_branch(instr, distance);
+		}
+
+		old_offs = offs;
+		offs += instr_total_sz;
+		if (old_offs > offs)
+		{
+			pezj_ir_set_err_offs_overflow(ir, i);
+			return false;
+		}
+	}
+	return true;
+}
+
+static inline void yes_instr_shift(ezj_ir_instr * instr, uint count, int val)
+{
+	for (uint i = 1; i < count; ++i)
+		pezj_instr_add_to_offs_in_code(instr + i, val);
+}
+
+static bool yes_instr_sizes_finalize(
+	ezj_ir * ir,
+	const ezj_fn_tbl * fn_tbl,
+	uptr base
+)
+{
+	// find out the minimum sizes for all instructions
+	// general idea: all instr begin with a discovered instr fn call and post
+	// call backward branches bmags and sizes, and smallest forward branches
+	// because all bmags would mostly only get bigger, instr will mostly be
+	// pushed further away and not closer together
+	// for every instr which changes size, all instr after it will be moved
+	// accordingly
+	// this process iterates until no instr changes size
+	ezj_ir_instr * instr = NULL;
+	bool has_change = false;
+	uint offs = CODE_START;
+	uint old_offs = CODE_START;
+	uint old_total = 0;
+	uint new_total = 0;
+	uptr src = 0;
+	uptr dest = 0;
+	iptr distance = 0;
+	byte old_size = 0;
+	byte new_size = 0;
+	uint end = pezj_ir_get_len(ir);
+
+	do {
+		offs = CODE_START;
+		has_change = false;
+		for (uint i = 0; i < end; ++i)
+		{
+			instr = pezj_ir_get_instr(ir, i);
+			pezj_instr_set_offs_in_code(instr, offs);
+
+			old_total = pezj_instr_get_call_target_size(instr);
+			new_total = old_total;
+
+			old_size = pezj_instr_get_size_instr_fn_call(instr);
+			old_total += old_size;
+			dest = yes_get_instr_fn_call_dest(instr, fn_tbl);
+			src = base + offs + new_total;
+			distance = (iptr)(dest - src);
+			new_size = yes_find_min_instr_fn_call(instr, distance);
+			new_total += new_size;
+			has_change = (new_size != old_size);
+
+			if (pezj_instr_has_post_branch(instr))
+			{
+				old_size = pezj_instr_get_size_post_call_branch(instr);
+				old_total += old_size;
+				dest = (uptr)pezj_instr_get_offs_of_target(instr);
+				src = offs + new_total;
+				distance = (iptr)(dest - src);
+				new_size = yes_find_min_post_call_branch(instr, distance);
+				new_total += new_size;
+				has_change = (has_change || (new_size != old_size));
+			}
+
+			if (has_change)
+				yes_instr_shift(instr, end - i, new_total - old_total);
+
+			old_offs = offs;
+			offs += new_total;
+			if (old_offs > offs)
+			{
+				pezj_ir_set_err_offs_overflow(ir, i);
+				return false;
+			}
+		}
+	} while (has_change);
+	return true;
+}
+
+static bool yes_instr_check(ezj_ir * ir)
+{
+	// discovered bmag can't be larger than the declared when it's not none
+	ezj_ir_instr * instr = NULL;
+	byte decl_bmag = 0;
+	byte disc_bmag = 0;
+
+	uint end = pezj_ir_get_len(ir);
+	for (uint i = 0; i < end; ++i)
+	{
+		instr = pezj_ir_get_instr(ir, i);
+
+		decl_bmag = pezj_instr_get_bmag_decl_instr_fn_call(instr);
+		disc_bmag = pezj_instr_get_bmag_disc_instr_fn_call(instr);
+		if ((decl_bmag != PEZJ_BMAG_NONE) && (decl_bmag < disc_bmag))
+		{
+			pezj_ir_set_err_bmag_conflict(ir, i);
+			return false;
+		}
+
+		if (PEZJ_BMAG_ABS == disc_bmag)
+			pezj_ir_set_has_abs_fn_call(ir);
+
+		decl_bmag = pezj_instr_get_bmag_decl_post_call_branch(instr);
+		disc_bmag = pezj_instr_get_bmag_disc_post_call_branch(instr);
+		if ((decl_bmag != PEZJ_BMAG_NONE) && (decl_bmag < disc_bmag))
+		{
+			pezj_ir_set_err_bmag_conflict(ir, i);
+			return false;
+		}
+	}
+	return true;
+}
+
+static inline bool yes_do_sizes(
+	ezj_ir * ir,
+	const ezj_fn_tbl * fn_tbl,
+	const byte * code
+)
+{
+	uptr base = (uptr)code;
+	return (
+		yes_instr_sizes_init(ir, fn_tbl, base)
+		&& yes_instr_sizes_finalize(ir, fn_tbl, base)
+		&& yes_instr_check(ir)
+	);
+}
+
+static inline uptr yes_align_to_fn_ptr(uptr addr, uint * out_pad)
+{
+	uptr mod = addr % sizeof(ezj_void_fn);
+	uint pad = (uint)((sizeof(ezj_void_fn) - mod) % sizeof(ezj_void_fn));
+	*out_pad = pad;
+	return (addr + pad);
+}
+
+static inline size_t yes_compile(
+	ezj_ir * ir,
+	const ezj_fn_tbl * fn_tbl,
+	const byte * code
+)
+{
+	if (yes_do_sizes(ir, fn_tbl, code))
+	{
+		uint code_size = pezj_ir_get_code_size(ir);
+		uint fn_tbl_sz = 0;
+		uint pad = 0;
+
+		if (pezj_ir_has_abs_fn_call(ir))
+		{
+			uptr base = (uptr)code + code_size;
+			yes_align_to_fn_ptr(base, &pad);
+			fn_tbl_sz = pezj_fn_tbl_get_size_in_bytes(fn_tbl);
+		}
+
+		return (code_size + pad + fn_tbl_sz);
+	}
+	return 0;
+}
+
+static void yes_emit_fn_tbl(code_buff * cb, const ezj_fn_tbl * fn_tbl)
+{
+	uint ftbl_pad = 0;
+	uptr end_of_code = (uptr)(cb->buff) + cb->pos;
+	uptr ftbl_addr = yes_align_to_fn_ptr(end_of_code, &ftbl_pad);
+
+	size_t old_cb_pos = cb->pos;
+	cb->pos = TBL_PTR_OFFS;
+	arch_cmpl_fn_tbl_ptr(cb, ftbl_addr);
+	cb->pos = old_cb_pos;
+
+	const ezj_fn_tbl_entry * ftbl = pezj_fn_tbl_get_tbl_addr(fn_tbl);
+	size_t ftbl_sz = pezj_fn_tbl_get_size_in_bytes(fn_tbl);
+	memcpy((void *)ftbl_addr, (const void *)ftbl, ftbl_sz);
+
+	// final buffer position - necessary to clear cache
+	cb->pos += ftbl_pad + ftbl_sz;
+}
+
+static inline void yes_clear_cache(code_buff * cb)
+{
+	__builtin___clear_cache((void *)cb->buff, (void *)(cb->buff + cb->pos));
+}
+
+static void yes_emit_code(
+	const ezj_ir * ir,
+	const ezj_fn_tbl * fn_tbl,
+	byte * code
+)
+{
+
+	ezj_ir_instr * instr = NULL;
+	code_buff cb_ = {code, 0};
+	code_buff * cb = &cb_;
+	uint end = pezj_ir_get_len(ir);
+
+	arch_cmpl_begin(cb);
+	for (uint i = 0; i < end; ++i)
+	{
+		instr = pezj_ir_get_instr(ir, i);
+
+		if (pezj_instr_is_call_target(instr))
+			arch_cmpl_call_tgt(cb);
+
+		arch_cmpl_instr_fn_call(cb, instr, fn_tbl);
+		switch (pezj_instr_get_ir_type(instr))
+		{
+			case PEZJ_IR_NONE   : continue;
+			case PEZJ_IR_INSTR  : continue;
+			case PEZJ_IR_UJMP   : arch_cmpl_ujmp(cb, instr); continue;
+			case PEZJ_IR_CJMP   : arch_cmpl_cjmp(cb, instr); continue;
+			case PEZJ_IR_CALL   : arch_cmpl_call(cb, instr); continue;
+			case PEZJ_IR_RET    : arch_cmpl_ret(cb);         continue;
+			case PEZJ_IR_FINISH : arch_cmpl_finish(cb);      continue;
+			default             : continue; // never here
+		}
+	}
+
+	if (pezj_ir_has_abs_fn_call(ir))
+		yes_emit_fn_tbl(cb, fn_tbl);
+
+	yes_clear_cache(cb);
+}
+
+size_t yes_code_buff_size(unsigned int instr_count)
+{
+	return (AVG_INSTR_SZ * instr_count * 2) + MAX_TBL_SZ_BYTES + RESERVE_EXTRA;
+}
+
+#undef MAX_TBL_SZ_BYTES
+// </private>
+
+// <public>
+#include "ezjit_ver.ic"
+
+bool ezj_is_available(void)
+{
+	return true;
+}
+
+size_t ezj_code_buff_size(unsigned int ir_instr_count)
+{
+	return yes_code_buff_size(ir_instr_count);
+}
+
+size_t ezj_compile(
+	ezj_ir * ir,
+	const ezj_fn_tbl * fn_tbl,
+	const unsigned char * code
+)
+{
+	return yes_compile(ir, fn_tbl, code);
+}
+
+void ezj_emit(
+	const ezj_ir * ir,
+	const ezj_fn_tbl * fn_tbl,
+	unsigned char * code
+)
+{
+	yes_emit_code(ir, fn_tbl, code);
+}
+
+ezj_err_code ezj_err(
+	const ezj_ir * ir,
+	unsigned int * out_err_instr_num,
+	const char ** out_err_msg
+)
+{
+	ezj_err_code ec = pezj_ir_get_err_code(ir);
+
+	if (out_err_instr_num)
+		*out_err_instr_num = pezj_ir_get_err_instr(ir);
+
+	if (out_err_msg && (ec != EZJ_EC_NONE))
+		*out_err_msg = pezj_ir_get_err_str(ir);
+
+	return ec;
+}
+// </public>

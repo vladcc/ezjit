@@ -1,0 +1,56 @@
+INSTR      = INSTR_NEAR | INSTR_FAR | INSTR_ABS
+INSTR_NEAR = bl_<imm26>
+INSTR_FAR  = pla_x0_<imm33> + blr_x0
+INSTR_ABS  = ldr_x0_x19_<imm12> + blr_x0
+
+UJMP      = UJMP_NEAR | UJMP_FAR | UJMP_ABS
+UJMP_NEAR = INSTR + b_<imm26>
+UJMP_FAR  = INSTR + pla_x0_<imm33> + br_x0
+UJMP_ABS  = INSTR + plc_x0_<imm64> + br_x0
+
+CJMP      = CJMP_NEAR | CJMP_FAR | CJMP_ABS
+CJMP_NEAR = INSTR + tst_w0_w0 + b.ne_<imm19>
+CJMP_FAR  = INSTR + tst_w0_w0 + b.eq_<imm19> + pla_x0_<imm33> + br_x0
+CJMP_ABS  = INSTR + tst_w0_w0 + b.eq_<imm19> + plc_x0_<imm64> + br_x0
+
+CALL      = CALL_NEAR | CALL_FAR | CALL_ABS
+CALL_NEAR = INSTR + bl_<imm26>
+CALL_FAR  = INSTR + pla_x0_<imm33> + blr_x0
+CALL_ABS  = INSTR + plc_x0_<imm64> + blr_x0
+
+RET      = RET_NEAR | RET_FAR | RET_ABS
+RET_NEAR = INSTR + ldp_x29_x30 + ret
+RET_FAR  = RET_NEAR
+RET_ABS  = RET_NEAR
+
+FINISH      = FINISH_NEAR | FINISH_FAR | FINISH_ABS
+FINISH_NEAR = ldr_x19_sp + ldp_x29_x30 + ret
+FINISH_FAR  = FINISH_NEAR
+FINISH_ABS  = FINISH_NEAR
+
+#
+# plc_x0_<imm64> (place constant) is:
+# movz x0, <imm16>
+# movk x0, <imm16>, lsl 16
+# movk x0, <imm16>, lsl 32
+# movk x0, <imm16>, lsl 48
+# Range: UINT64_MAX
+#
+# pla_x0_<imm33> (place address) is:
+# adrp_x0_<imm21>
+# add_x0_x0_<imm12>
+# Range: +/- 4GB
+#
+bl_<imm26>         = 4
+blr_x0             = 4
+b_<imm26>          = 4
+br_x0              = 4
+ldr_x0_x19_<imm12> = 4
+pla_x0_<imm33>     = 8
+plc_x0_<imm64>     = 16
+tst_w0_w0          = 4
+b.ne_<imm19>       = 4
+b.eq_<imm19>       = 4
+ldr_x19_sp         = 4
+ldp_x29_x30        = 4
+ret                = 4

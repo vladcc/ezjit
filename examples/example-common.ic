@@ -1,0 +1,960 @@
+#include "ezjit.h"
+
+#include <sys/mman.h>
+#include <unistd.h>
+
+#include <stdio.h>
+#include <stdint.h>
+#include <stdlib.h>
+#include <time.h>
+#include <inttypes.h>
+#include <string.h>
+
+typedef unsigned char byte;
+typedef unsigned int uint;
+
+static void err_quit(const char * msg)
+{
+	fprintf(stderr, "%s\n", msg);
+	exit(EXIT_FAILURE);
+}
+
+// <code-buffer>
+typedef struct code_buff {
+	byte * code;
+	size_t size;
+} code_buff;
+
+static code_buff * get_code_buff(void)
+{
+#define CODE_BUFF_SZ (1024*1024*8)
+
+	static code_buff cbuff = {0};
+	static byte code_arr[CODE_BUFF_SZ] = {0};
+
+	int pg_sz = getpagesize();
+	int act_sz = CODE_BUFF_SZ;
+	int mod = (int)((uintptr_t)code_arr % (unsigned)pg_sz);
+	int left_over = 0;
+	byte * cptr = code_arr;
+
+	if (mod)
+	{
+		left_over = pg_sz - mod;
+		cptr += left_over;
+		act_sz = CODE_BUFF_SZ - pg_sz;
+	}
+
+	if (act_sz <= 0)
+		return NULL;
+
+	if (mprotect(cptr, (size_t)act_sz, PROT_READ|PROT_WRITE) == -1)
+	{
+		perror("mprotect");
+		return NULL;
+	}
+
+	memset(code_arr, 0, sizeof(code_arr));
+	cbuff.code = cptr;
+	cbuff.size = (size_t)act_sz;
+
+	return &cbuff;
+
+#undef CODE_BUFF_SZ
+}
+static code_buff * get_rw(void)
+{
+	return get_code_buff();
+}
+static void make_rx(void * mem, size_t size)
+{
+	if (mprotect(mem, size, PROT_READ|PROT_EXEC) == -1)
+	{
+		perror("mprotect");
+		exit(EXIT_FAILURE);
+	}
+}
+// </code-buffer>
+
+// <vm>
+typedef enum {
+	ADDVVC,    //  0
+	ADDVVV,    //  1
+	BEQRC,     //  2
+	BGRTVV,    //  3
+	BGEQVV,    //  4
+	BLEQVV,    //  5
+	BLTVC,     //  6
+	BNEQVC,    //  7
+	BEQVC,     //  8
+	CALL,      //  9
+	FREEV,     //  10
+	JMP,       //  11
+	LDBVVV,    //  12
+	MALLOC,    //  13
+	MEMSET,    //  14
+	MOVRC,     //  15
+	MOVRV,     //  16
+	MOVVC,     //  17
+	MOVVR,     //  18
+	MOVVV,     //  19
+	MULVVV,    //  20
+	POP,       //  21
+	PUSHA,     //  22
+	PUSHC,     //  23
+	PUSHV,     //  24
+	RET,       //  25
+	STBVCC,    //  26
+	STBVVC,    //  27
+	SUBVVC,    //  28
+	FINISH,    //  29
+	INSTR_END  //  30
+} instr_type;
+
+typedef struct vm_instr {
+	instr_type type;
+	int32_t op_a;
+	int32_t op_b;
+	int32_t op_c;
+	void * ptr; // for direct threaded
+} vm_instr;
+
+typedef struct vm_code {
+	vm_instr * code;
+	size_t size;
+} vm_code;
+
+typedef size_t word;
+
+#define VM_STK_SZ 1024
+
+static struct {
+	vm_code * code;
+	vm_instr * ip;
+	word * bp;
+	word * sp;
+	word rret;
+	word stack[VM_STK_SZ];
+	bool done;
+} vm;
+
+static vm_code * vm_get_code(void)
+{
+	return vm.code;
+}
+
+static inline void * vm_malloc(size_t n)
+{
+	void * ret = malloc(n+2);
+	if (!ret)
+	{
+		fprintf(stderr, "error: malloc() failed\n");
+		exit(EXIT_FAILURE);
+	}
+	return ret;
+}
+
+static inline void vm_mem_init(byte val, byte * mem, size_t sz)
+{
+	memset(mem, val, (size_t)sz+2);
+}
+
+#if defined(NEVER_INLINE)
+#define ATTR __attribute__ ((noinline))
+#elif defined(ALWAYS_INLINE)
+#define ATTR inline __attribute__((always_inline))
+#else
+#define ATTR inline
+#endif
+
+static ATTR void vm_i_addvvc(void)
+{
+	vm.bp[vm.ip->op_a] = vm.bp[vm.ip->op_b] + vm.ip->op_c;
+	++vm.ip;
+}
+static ATTR void vm_i_addvvv(void)
+{
+	vm.bp[vm.ip->op_a] = vm.bp[vm.ip->op_b] + vm.bp[vm.ip->op_c];
+	++vm.ip;
+}
+static ATTR bool vm_i_beqrc(void)
+{
+	bool is_eq = ((int32_t)vm.rret == vm.ip->op_b);
+	vm.ip += is_eq ? vm.ip->op_c : 1;
+	return is_eq;
+}
+static ATTR bool vm_i_bgrtvv(void)
+{
+	bool is_grt = (vm.bp[vm.ip->op_a] > vm.bp[vm.ip->op_b]);
+	vm.ip += is_grt ? vm.ip->op_c : 1;
+	return is_grt;
+}
+static ATTR bool vm_i_bgeqvv(void)
+{
+	bool is_grt = (vm.bp[vm.ip->op_a] >= vm.bp[vm.ip->op_b]);
+	vm.ip += is_grt ? vm.ip->op_c : 1;
+	return is_grt;
+}
+static ATTR bool vm_i_bleqvv(void)
+{
+	bool is_leq = (vm.bp[vm.ip->op_a] <= vm.bp[vm.ip->op_b]);
+	vm.ip += is_leq ? vm.ip->op_c : 1;
+	return is_leq;
+}
+static ATTR bool vm_i_bltvc(void)
+{
+	bool is_lt = ((int32_t)vm.bp[vm.ip->op_a] < vm.ip->op_b);
+	vm.ip += is_lt ? vm.ip->op_c : 1;
+	return is_lt;
+}
+static ATTR bool vm_i_beqvc(void)
+{
+	bool is_eq = ((int32_t)vm.bp[vm.ip->op_a] == vm.ip->op_b);
+	vm.ip += is_eq ? vm.ip->op_c : 1;
+	return is_eq;
+}
+static ATTR bool vm_i_bneqvc(void)
+{
+	bool is_neq = ((int32_t)vm.bp[vm.ip->op_a] != vm.ip->op_b);
+	vm.ip += is_neq ? vm.ip->op_c : 1;
+	return is_neq;
+}
+static ATTR void vm_i_call(void)
+{
+	// call
+	++vm.sp;
+	*vm.sp = (word)(vm.ip+1);
+	vm.ip += vm.ip->op_a;
+
+	// enter
+	++vm.sp;
+	*vm.sp = (word)vm.bp;
+	vm.bp = vm.sp;
+}
+static ATTR void vm_i_freev(void)
+{
+	free((void *)vm.bp[vm.ip->op_a]);
+	++vm.ip;
+}
+static ATTR void vm_i_jmp(void)
+{
+	vm.ip += vm.ip->op_a;
+}
+static ATTR void vm_i_ldbvvv(void)
+{
+	byte * p = (byte *)vm.bp[vm.ip->op_b];
+	vm.bp[vm.ip->op_a] = p[vm.bp[vm.ip->op_c]];
+	++vm.ip;
+}
+static ATTR void vm_i_malloc(void)
+{
+	void * p = vm_malloc(vm.bp[vm.ip->op_b]);
+	vm.bp[vm.ip->op_a] = (word)p;
+	++vm.ip;
+}
+static ATTR void vm_i_memset(void)
+{
+	vm_mem_init((int)vm.bp[vm.ip->op_b], (byte *)vm.bp[vm.ip->op_a],
+		vm.bp[vm.ip->op_c]);
+	++vm.ip;
+}
+static ATTR void vm_i_movrc(void)
+{
+	vm.rret = vm.ip->op_b;
+	++vm.ip;
+}
+static ATTR void vm_i_movrv(void)
+{
+	vm.rret = vm.bp[vm.ip->op_b];
+	++vm.ip;
+}
+static ATTR void vm_i_movvc(void)
+{
+	vm.bp[vm.ip->op_a] = vm.ip->op_b;
+	++vm.ip;
+}
+static ATTR void vm_i_movvr(void)
+{
+	vm.bp[vm.ip->op_a] = vm.rret;
+	++vm.ip;
+}
+static ATTR void vm_i_movvv(void)
+{
+	vm.bp[vm.ip->op_a] = vm.bp[vm.ip->op_b];
+	++vm.ip;
+}
+static ATTR void vm_i_mulvvv(void)
+{
+	vm.bp[vm.ip->op_a] = vm.bp[vm.ip->op_b] * vm.bp[vm.ip->op_c];
+	++vm.ip;
+}
+static ATTR void vm_i_pop(void)
+{
+	vm.sp -= vm.ip->op_a;
+	++vm.ip;
+}
+static ATTR void vm_i_pusha(void)
+{
+	vm.sp += vm.ip->op_a;
+	++vm.ip;
+}
+static ATTR void vm_i_pushc(void)
+{
+	++vm.sp;
+	*vm.sp = vm.ip->op_a;
+	++vm.ip;
+}
+static ATTR void vm_i_pushv(void)
+{
+	++vm.sp;
+	*vm.sp = vm.bp[vm.ip->op_a];
+	++vm.ip;
+}
+static ATTR void vm_i_ret(void)
+{
+	// leave
+	vm.bp = (word *)(*vm.sp);
+	--vm.sp;
+
+	// ret
+	vm.ip = (vm_instr *)*vm.sp;
+	--vm.sp;
+}
+static ATTR void vm_i_stbvcc(void)
+{
+	byte * p = (byte *)vm.bp[vm.ip->op_a];
+	p[vm.ip->op_b] = vm.ip->op_c;
+	++vm.ip;
+}
+static ATTR void vm_i_stbvvc(void)
+{
+	byte * p = (byte *)vm.bp[vm.ip->op_a];
+	p[vm.bp[vm.ip->op_b]] = vm.ip->op_c;
+	++vm.ip;
+}
+static ATTR void vm_i_subvvc(void)
+{
+	vm.bp[vm.ip->op_a] = vm.bp[vm.ip->op_b] - vm.ip->op_c;
+	++vm.ip;
+}
+static ATTR void vm_i_finish(void)
+{
+	vm.done = true;
+}
+
+#ifdef FN_TBL_INDEX_TEST
+#define TBL_ENTRY_OFFS 482
+#define TBL_LEN        EZJ_FN_TBL_MAX_LEN
+static ezj_fn_tbl_entry fn_arr[TBL_LEN] = {
+	[TBL_ENTRY_OFFS] = {.void_fn = vm_i_addvvc},
+	{.void_fn = vm_i_addvvv},
+	{.bool_fn = vm_i_beqrc},
+	{.bool_fn = vm_i_bgrtvv},
+	{.bool_fn = vm_i_bgeqvv},
+	{.bool_fn = vm_i_bleqvv},
+	{.bool_fn = vm_i_bltvc},
+	{.bool_fn = vm_i_bneqvc},
+	{.bool_fn = vm_i_beqvc},
+	{.void_fn = vm_i_call},
+	{.void_fn = vm_i_freev},
+	{.void_fn = vm_i_jmp},
+	{.void_fn = vm_i_ldbvvv},
+	{.void_fn = vm_i_malloc},
+	{.void_fn = vm_i_memset},
+	{.void_fn = vm_i_movrc},
+	{.void_fn = vm_i_movrv},
+	{.void_fn = vm_i_movvc},
+	{.void_fn = vm_i_movvr},
+	{.void_fn = vm_i_movvv},
+	{.void_fn = vm_i_mulvvv},
+	{.void_fn = vm_i_pop},
+	{.void_fn = vm_i_pusha},
+	{.void_fn = vm_i_pushc},
+	{.void_fn = vm_i_pushv},
+	{.void_fn = vm_i_ret},
+	{.void_fn = vm_i_stbvcc},
+	{.void_fn = vm_i_stbvvc},
+	{.void_fn = vm_i_subvvc},
+	{.void_fn = vm_i_finish},
+};
+#else
+#define TBL_ENTRY_OFFS 0
+#define TBL_LEN        INSTR_END
+static ezj_fn_tbl_entry fn_arr[TBL_LEN] = {
+	{.void_fn = vm_i_addvvc},
+	{.void_fn = vm_i_addvvv},
+	{.bool_fn = vm_i_beqrc},
+	{.bool_fn = vm_i_bgrtvv},
+	{.bool_fn = vm_i_bgeqvv},
+	{.bool_fn = vm_i_bleqvv},
+	{.bool_fn = vm_i_bltvc},
+	{.bool_fn = vm_i_bneqvc},
+	{.bool_fn = vm_i_beqvc},
+	{.void_fn = vm_i_call},
+	{.void_fn = vm_i_freev},
+	{.void_fn = vm_i_jmp},
+	{.void_fn = vm_i_ldbvvv},
+	{.void_fn = vm_i_malloc},
+	{.void_fn = vm_i_memset},
+	{.void_fn = vm_i_movrc},
+	{.void_fn = vm_i_movrv},
+	{.void_fn = vm_i_movvc},
+	{.void_fn = vm_i_movvr},
+	{.void_fn = vm_i_movvv},
+	{.void_fn = vm_i_mulvvv},
+	{.void_fn = vm_i_pop},
+	{.void_fn = vm_i_pusha},
+	{.void_fn = vm_i_pushc},
+	{.void_fn = vm_i_pushv},
+	{.void_fn = vm_i_ret},
+	{.void_fn = vm_i_stbvcc},
+	{.void_fn = vm_i_stbvvc},
+	{.void_fn = vm_i_subvvc},
+	{.void_fn = vm_i_finish},
+};
+#endif
+
+static ezj_fn_tbl fn_tbl = {fn_arr, TBL_LEN};
+
+#define NUM_INSTR 1024
+
+static ezj_ir * vm_compile_ir(vm_code * prog)
+{
+	static ezj_ir_instr ezj_ir_buff[NUM_INSTR] = {0};
+	memset(ezj_ir_buff, 0, sizeof(ezj_ir_buff));
+
+	size_t ezj_ir_buff_cap = NUM_INSTR;
+	size_t ir_buff_sz = ezj_ir_buff_size(NUM_INSTR);
+	if (ezj_ir_buff_cap * sizeof(ezj_ir_instr) < ir_buff_sz)
+		err_quit("ir buffer too small");
+
+	static ezj_ir ezj_ir_ = {0};
+	ezj_ir * ezj_ir = &ezj_ir_;
+
+	*ezj_ir = ezj_ir_init(ezj_ir_buff, ezj_ir_buff_cap);
+
+	vm_instr * instr = NULL;
+	unsigned int itype = 0;
+	unsigned int entry = 0;
+	for (size_t i = 0, end = prog->size; i < end; ++i)
+	{
+		instr = prog->code + i;
+		itype = instr->type;
+		entry = itype + TBL_ENTRY_OFFS;
+		switch (itype)
+		{
+
+			case ADDVVC: ezj_ir_make_instr(ezj_ir, entry); continue;
+			case ADDVVV: ezj_ir_make_instr(ezj_ir, entry); continue;
+			case BEQRC:  ezj_ir_make_cjmp(ezj_ir, entry, instr->op_c); continue;
+			case BGRTVV: ezj_ir_make_cjmp(ezj_ir, entry, instr->op_c); continue;
+			case BGEQVV: ezj_ir_make_cjmp(ezj_ir, entry, instr->op_c); continue;
+			case BLEQVV: ezj_ir_make_cjmp(ezj_ir, entry, instr->op_c); continue;
+			case BLTVC:  ezj_ir_make_cjmp(ezj_ir, entry, instr->op_c); continue;
+			case BNEQVC: ezj_ir_make_cjmp(ezj_ir, entry, instr->op_c); continue;
+			case BEQVC:  ezj_ir_make_cjmp(ezj_ir, entry, instr->op_c); continue;
+			case CALL:   ezj_ir_make_call(ezj_ir, entry, instr->op_a); continue;
+			case FREEV:  ezj_ir_make_instr(ezj_ir, entry); continue;
+			case JMP:    ezj_ir_make_ujmp(ezj_ir, entry, instr->op_a); continue;
+			case LDBVVV: ezj_ir_make_instr(ezj_ir, entry); continue;
+			case MALLOC: ezj_ir_make_instr(ezj_ir, entry); continue;
+			case MEMSET: ezj_ir_make_instr(ezj_ir, entry); continue;
+			case MOVRC:  ezj_ir_make_instr(ezj_ir, entry); continue;
+			case MOVRV:  ezj_ir_make_instr(ezj_ir, entry); continue;
+			case MOVVC:  ezj_ir_make_instr(ezj_ir, entry); continue;
+			case MOVVR:  ezj_ir_make_instr(ezj_ir, entry); continue;
+			case MOVVV:  ezj_ir_make_instr(ezj_ir, entry); continue;
+			case MULVVV: ezj_ir_make_instr(ezj_ir, entry); continue;
+			case POP:    ezj_ir_make_instr(ezj_ir, entry); continue;
+			case PUSHA:  ezj_ir_make_instr(ezj_ir, entry); continue;
+			case PUSHC:  ezj_ir_make_instr(ezj_ir, entry); continue;
+			case PUSHV:  ezj_ir_make_instr(ezj_ir, entry); continue;
+			case RET:    ezj_ir_make_ret(ezj_ir, entry); continue;
+			case STBVCC: ezj_ir_make_instr(ezj_ir, entry); continue;
+			case STBVVC: ezj_ir_make_instr(ezj_ir, entry); continue;
+			case SUBVVC: ezj_ir_make_instr(ezj_ir, entry); continue;
+			case FINISH: ezj_ir_make_finish(ezj_ir, entry); continue;
+			default: break;
+		}
+	}
+	return ezj_ir;
+}
+// </vm>
+typedef struct vm_init_data vm_init_data;
+static void vm_init(const vm_init_data * data);
+static uint switch_loop(const vm_init_data * data)
+{
+	vm_init(data);
+	while (1)
+	{
+		switch (vm.ip->type)
+		{
+			case ADDVVC:  vm_i_addvvc();  continue;
+			case ADDVVV:  vm_i_addvvv();  continue;
+			case BEQRC:   vm_i_beqrc();   continue;
+			case BGRTVV:  vm_i_bgrtvv();  continue;
+			case BGEQVV:  vm_i_bgeqvv();  continue;
+			case BLEQVV:  vm_i_bleqvv();  continue;
+			case BLTVC:   vm_i_bltvc();   continue;
+			case BNEQVC:  vm_i_bneqvc();  continue;
+			case BEQVC:   vm_i_beqvc();   continue;
+			case CALL:    vm_i_call();    continue;
+			case FREEV:   vm_i_freev();   continue;
+			case JMP:     vm_i_jmp();     continue;
+			case LDBVVV:  vm_i_ldbvvv();  continue;
+			case MALLOC:  vm_i_malloc();  continue;
+			case MEMSET:  vm_i_memset();  continue;
+			case MOVRC:   vm_i_movrc();   continue;
+			case MOVRV:   vm_i_movrv();   continue;
+			case MOVVC:   vm_i_movvc();   continue;
+			case MOVVR:   vm_i_movvr();   continue;
+			case MOVVV:   vm_i_movvv();   continue;
+			case MULVVV:  vm_i_mulvvv();  continue;
+			case POP:     vm_i_pop();     continue;
+			case PUSHA:   vm_i_pusha();   continue;
+			case PUSHC:   vm_i_pushc();   continue;
+			case PUSHV:   vm_i_pushv();   continue;
+			case RET:     vm_i_ret();     continue;
+			case STBVCC:  vm_i_stbvcc();  continue;
+			case STBVVC:  vm_i_stbvvc();  continue;
+			case SUBVVC:  vm_i_subvvc();  continue;
+			case FINISH:  vm_i_finish();  goto done;
+			default:
+				err_quit("unknown instruction");
+				break; // never here
+		}
+	}
+
+done:
+	return vm.rret;
+}
+
+static uint fptrs(const vm_init_data * data)
+{
+	typedef void (*fn)(void);
+	static fn pfn[] = {
+		vm_i_addvvc,
+		vm_i_addvvv,
+		(fn)vm_i_beqrc,
+		(fn)vm_i_bgrtvv,
+		(fn)vm_i_bgeqvv,
+		(fn)vm_i_bleqvv,
+		(fn)vm_i_bltvc,
+		(fn)vm_i_bneqvc,
+		(fn)vm_i_beqvc,
+		vm_i_call,
+		vm_i_freev,
+		vm_i_jmp,
+		vm_i_ldbvvv,
+		vm_i_malloc,
+		vm_i_memset,
+		vm_i_movrc,
+		vm_i_movrv,
+		vm_i_movvc,
+		vm_i_movvr,
+		vm_i_movvv,
+		vm_i_mulvvv,
+		vm_i_pop,
+		vm_i_pusha,
+		vm_i_pushc,
+		vm_i_pushv,
+		vm_i_ret,
+		vm_i_stbvcc,
+		vm_i_stbvvc,
+		vm_i_subvvc,
+		vm_i_finish,
+	};
+
+	vm_init(data);
+	while (!vm.done)
+		pfn[vm.ip->type]();
+	return vm.rret;
+}
+
+static uint threaded(const vm_init_data * data)
+{
+	static void * thr[] = {
+		&&i_addvvc,
+		&&i_addvvv,
+		&&i_beqrc,
+		&&i_bgrtvv,
+		&&i_bgeqvv,
+		&&i_bleqvv,
+		&&i_bltvc,
+		&&i_bneqvc,
+		&&i_beqvc,
+		&&i_call,
+		&&i_freev,
+		&&i_jmp,
+		&&i_ldbvvv,
+		&&i_malloc,
+		&&i_memset,
+		&&i_movrc,
+		&&i_movrv,
+		&&i_movvc,
+		&&i_movvr,
+		&&i_movvv,
+		&&i_mulvvv,
+		&&i_pop,
+		&&i_pusha,
+		&&i_pushc,
+		&&i_pushv,
+		&&i_ret,
+		&&i_stbvcc,
+		&&i_stbvvc,
+		&&i_subvvc,
+		&&i_finish,
+	};
+
+	vm_init(data);
+
+	goto *thr[vm.ip->type];
+i_addvvc:
+	vm_i_addvvc();
+	goto *thr[vm.ip->type];
+i_addvvv:
+	vm_i_addvvv();
+	goto *thr[vm.ip->type];
+i_beqrc:
+	vm_i_beqrc();
+	goto *thr[vm.ip->type];
+i_bgrtvv:
+	vm_i_bgrtvv();
+	goto *thr[vm.ip->type];
+i_bgeqvv:
+	vm_i_bgeqvv();
+	goto *thr[vm.ip->type];
+i_bleqvv:
+	vm_i_bleqvv();
+	goto *thr[vm.ip->type];
+i_bltvc:
+	vm_i_bltvc();
+	goto *thr[vm.ip->type];
+i_bneqvc:
+	vm_i_bneqvc();
+	goto *thr[vm.ip->type];
+i_beqvc:
+	vm_i_beqvc();
+	goto *thr[vm.ip->type];
+i_call:
+	vm_i_call();
+	goto *thr[vm.ip->type];
+i_freev:
+	vm_i_freev();
+	goto *thr[vm.ip->type];
+i_jmp:
+	vm_i_jmp();
+	goto *thr[vm.ip->type];
+i_ldbvvv:
+	vm_i_ldbvvv();
+	goto *thr[vm.ip->type];
+i_malloc:
+	vm_i_malloc();
+	goto *thr[vm.ip->type];
+i_memset:
+	vm_i_memset();
+	goto *thr[vm.ip->type];
+i_movrc:
+	vm_i_movrc();
+	goto *thr[vm.ip->type];
+i_movrv:
+	vm_i_movrv();
+	goto *thr[vm.ip->type];
+i_movvc:
+	vm_i_movvc();
+	goto *thr[vm.ip->type];
+i_movvr:
+	vm_i_movvr();
+	goto *thr[vm.ip->type];
+i_movvv:
+	vm_i_movvv();
+	goto *thr[vm.ip->type];
+i_mulvvv:
+	vm_i_mulvvv();
+	goto *thr[vm.ip->type];
+i_pop:
+	vm_i_pop();
+	goto *thr[vm.ip->type];
+i_pusha:
+	vm_i_pusha();
+	goto *thr[vm.ip->type];
+i_pushc:
+	vm_i_pushc();
+	goto *thr[vm.ip->type];
+i_pushv:
+	vm_i_pushv();
+	goto *thr[vm.ip->type];
+i_ret:
+	vm_i_ret();
+	goto *thr[vm.ip->type];
+i_stbvcc:
+	vm_i_stbvcc();
+	goto *thr[vm.ip->type];
+i_stbvvc:
+	vm_i_stbvvc();
+	goto *thr[vm.ip->type];
+i_subvvc:
+	vm_i_subvvc();
+	goto *thr[vm.ip->type];
+i_finish:
+	vm_i_finish();
+	return vm.rret;
+}
+
+static uint dthreaded(const vm_init_data * data)
+{
+	static void * thr[] = {
+		&&i_addvvc,
+		&&i_addvvv,
+		&&i_beqrc,
+		&&i_bgrtvv,
+		&&i_bgeqvv,
+		&&i_bleqvv,
+		&&i_bltvc,
+		&&i_bneqvc,
+		&&i_beqvc,
+		&&i_call,
+		&&i_freev,
+		&&i_jmp,
+		&&i_ldbvvv,
+		&&i_malloc,
+		&&i_memset,
+		&&i_movrc,
+		&&i_movrv,
+		&&i_movvc,
+		&&i_movvr,
+		&&i_movvv,
+		&&i_mulvvv,
+		&&i_pop,
+		&&i_pusha,
+		&&i_pushc,
+		&&i_pushv,
+		&&i_ret,
+		&&i_stbvcc,
+		&&i_stbvvc,
+		&&i_subvvc,
+		&&i_finish,
+	};
+
+	vm_init(data);
+
+	vm_instr * instr = NULL;
+	size_t end = vm.code->size;
+	for (size_t i = 0; i < end; ++i)
+	{
+		instr = vm.code->code + i;
+		instr->ptr = thr[instr->type];
+	}
+
+	goto *(vm.ip->ptr);
+
+i_addvvc:
+	vm_i_addvvc();
+	goto *(vm.ip->ptr);
+i_addvvv:
+	vm_i_addvvv();
+	goto *(vm.ip->ptr);
+i_beqrc:
+	vm_i_beqrc();
+	goto *(vm.ip->ptr);
+i_bgrtvv:
+	vm_i_bgrtvv();
+	goto *(vm.ip->ptr);
+i_bgeqvv:
+	vm_i_bgeqvv();
+	goto *(vm.ip->ptr);
+i_bleqvv:
+	vm_i_bleqvv();
+	goto *(vm.ip->ptr);
+i_bltvc:
+	vm_i_bltvc();
+	goto *(vm.ip->ptr);
+i_bneqvc:
+	vm_i_bneqvc();
+	goto *(vm.ip->ptr);
+i_beqvc:
+	vm_i_beqvc();
+	goto *(vm.ip->ptr);
+i_call:
+	vm_i_call();
+	goto *(vm.ip->ptr);
+i_freev:
+	vm_i_freev();
+	goto *(vm.ip->ptr);
+i_jmp:
+	vm_i_jmp();
+	goto *(vm.ip->ptr);
+i_ldbvvv:
+	vm_i_ldbvvv();
+	goto *(vm.ip->ptr);
+i_malloc:
+	vm_i_malloc();
+	goto *(vm.ip->ptr);
+i_memset:
+	vm_i_memset();
+	goto *(vm.ip->ptr);
+i_movrc:
+	vm_i_movrc();
+	goto *(vm.ip->ptr);
+i_movrv:
+	vm_i_movrv();
+	goto *(vm.ip->ptr);
+i_movvc:
+	vm_i_movvc();
+	goto *(vm.ip->ptr);
+i_movvr:
+	vm_i_movvr();
+	goto *(vm.ip->ptr);
+i_movvv:
+	vm_i_movvv();
+	goto *(vm.ip->ptr);
+i_mulvvv:
+	vm_i_mulvvv();
+	goto *(vm.ip->ptr);
+i_pop:
+	vm_i_pop();
+	goto *(vm.ip->ptr);
+i_pusha:
+	vm_i_pusha();
+	goto *(vm.ip->ptr);
+i_pushc:
+	vm_i_pushc();
+	goto *(vm.ip->ptr);
+i_pushv:
+	vm_i_pushv();
+	goto *(vm.ip->ptr);
+i_ret:
+	vm_i_ret();
+	goto *(vm.ip->ptr);
+i_stbvcc:
+	vm_i_stbvcc();
+	goto *(vm.ip->ptr);
+i_stbvvc:
+	vm_i_stbvvc();
+	goto *(vm.ip->ptr);
+i_subvvc:
+	vm_i_subvvc();
+	goto *(vm.ip->ptr);
+i_finish:
+	vm_i_finish();
+	return vm.rret;
+}
+
+// <ezj>
+// <mod-bmags>
+typedef void (*mod_bmags)(ezj_ir * ir);
+typedef void (*entry_point)(void);
+
+static void modify_bmags_far_call(ezj_ir * ir)
+{
+	ezj_ir_instr * code = pezj_ir_get_instr_arr(ir);
+	ezj_ir_instr * instr = NULL;
+	for (size_t i = 0, end = pezj_ir_get_len(ir); i < end; ++i)
+	{
+		instr = code + i;
+		ezj_ir_set_bmag_far(instr);
+	}
+}
+static void modify_bmags_far_call_jmp(ezj_ir * ir)
+{
+	ezj_ir_instr * code = pezj_ir_get_instr_arr(ir);
+	ezj_ir_instr * instr = NULL;
+	for (size_t i = 0, end = pezj_ir_get_len(ir); i < end; ++i)
+	{
+		instr = code + i;
+		ezj_ir_set_bmag_far(instr);
+		if (pezj_instr_has_post_branch(instr))
+			pezj_instr_set_bmag_decl_post_call_branch(instr, PEZJ_BMAG_FAR);
+	}
+}
+static void modify_bmags_abs_call(ezj_ir * ir)
+{
+	ezj_ir_instr * code = pezj_ir_get_instr_arr(ir);
+	ezj_ir_instr * instr = NULL;
+	for (size_t i = 0, end = pezj_ir_get_len(ir); i < end; ++i)
+	{
+		instr = code + i;
+		ezj_ir_set_bmag_abs(instr);
+	}
+}
+static void modify_bmags_abs_call_jmp(ezj_ir * ir)
+{
+	ezj_ir_instr * code = pezj_ir_get_instr_arr(ir);
+	ezj_ir_instr * instr = NULL;
+	for (size_t i = 0, end = pezj_ir_get_len(ir); i < end; ++i)
+	{
+		instr = code + i;
+		ezj_ir_set_bmag_abs(instr);
+		if (pezj_instr_has_post_branch(instr))
+			pezj_instr_set_bmag_decl_post_call_branch(instr, PEZJ_BMAG_ABS);
+	}
+}
+// </mod-bmags>
+
+// <compile>
+static entry_point compile(const vm_init_data * data, mod_bmags mod)
+{
+	vm_init(data);
+	ezj_ir * ezj_ir = vm_compile_ir(vm_get_code());
+
+	if (mod)
+		mod(ezj_ir);
+
+	code_buff * cbf = get_rw();
+	size_t code_buff_sz = ezj_code_buff_size(NUM_INSTR);
+	if (cbf->size < code_buff_sz)
+		err_quit("code buffer too small");
+
+	if (ezj_compile(ezj_ir, &fn_tbl, cbf->code))
+	{
+		ezj_emit(ezj_ir, &fn_tbl, cbf->code);
+		make_rx(cbf->code, cbf->size);
+		return (entry_point)((void *)cbf->code);
+	}
+	return NULL;
+}
+// </compile>
+
+// <execute>
+static uint ezj(const vm_init_data * data)
+{
+	entry_point entry = compile(data, NULL);
+	entry();
+	return vm.rret;
+}
+static uint ezj_fc(const vm_init_data * data)
+{
+	entry_point entry = compile(data, modify_bmags_far_call);
+	entry();
+	return vm.rret;
+}
+static uint ezj_fcj(const vm_init_data * data)
+{
+	entry_point entry = compile(data, modify_bmags_far_call_jmp);
+	entry();
+	return vm.rret;
+}
+static uint ezj_ac(const vm_init_data * data)
+{
+	entry_point entry = compile(data, modify_bmags_abs_call);
+	entry();
+	return vm.rret;
+}
+static uint ezj_acj(const vm_init_data * data)
+{
+	entry_point entry = compile(data, modify_bmags_abs_call_jmp);
+	entry();
+	return vm.rret;
+}
+// </execute>
+
+typedef uint (*fn_run)(const vm_init_data * data);
+void time_code(fn_run exec, const vm_init_data * data, const char * name)
+{
+	clock_t start = clock();
+	uint res = exec(data);
+	clock_t end = clock();
+	double how_long = (double)(end - start) / CLOCKS_PER_SEC;
+	printf("%u %s %.2fs\n", res, name, how_long);
+}
+

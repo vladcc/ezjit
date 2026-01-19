@@ -1,0 +1,16 @@
+start
+
+type list
+has  head node
+has  tail node
+has  count
+
+type val
+has  num
+
+type node
+has  data
+has  next_ node
+
+end
+

@@ -1,0 +1,480 @@
+#include <stdint.h>
+#include <limits.h>
+
+// <x64>
+/*
+x64 instructions:
+Hex               Instr                 Size
+F3 0F 1E FA       endbr64               4
+
+48 B8 <imm64>     mov  rax <imm64>      10
+
+53                push rbx              1
+48 BB <imm64>     mov  rbx <imm64>      10
+5B                pop  rbx              1
+
+E8 <rel32>        call <rel32>          5
+FF 93 <imm32>     call [rbx + <imm32>]  6
+FF D0             call rax              2
+
+EB <rel8>         jmp  <rel8>           2
+E9 <rel32>        jmp  <rel32>          5
+
+FF E0             jmp  rax              2
+
+84 C0             test al, al           2
+
+75 <rel8>         jnz  <rel8>           2
+0F 85 <rel32>     jnz  <rel32>          6
+
+74 <rel8>         jz   <rel8>           2
+
+C3                ret                   1
+
+ez_jit instructions:
+Instr : INSTR
+Compos: INSTR_NEAR | INSTR_FAR | INSTR_ABS
+Size  : 5|5|6
+
+Instr : INSTR_NEAR
+Compos: call_<rel32>:5
+Size  : 5
+
+Instr : INSTR_FAR
+Compos: INSTR_NEAR
+Size  : 5
+
+Instr : INSTR_ABS
+Compos: call_rbx_<offs32>:6
+Size  : 6
+
+Instr : UJMP
+Compos: UJMP_NEAR | UJMP_FAR | UJMP_ABS
+Size  : (7|7|8)|(10|10|11)|(17|17|18)
+
+Instr : UJMP_NEAR
+Compos: INSTR + jmp_<rel8>:2
+Size  : 7|7|8
+
+Instr : UJMP_FAR
+Compos: INSTR + jmp_<rel32>:5
+Size  : 10|10|11
+
+Instr : UJMP_ABS
+Compos: INSTR + mov_rax_<imm64>:10 + jmp_rax:2
+Size  : 17|17|18
+
+Instr : CJMP
+Compos: CJMP_NEAR | CJMP_FAR | CJMP_ABS
+Size  : (9|9|10)|(13|13|14)|(21|21|22)
+
+Instr : CJMP_NEAR
+Compos: INSTR + test_al_al:2 + jnz_<rel8>:2
+Size  : 9|9|10
+
+Instr : CJMP_FAR
+Compos: INSTR + test_al_al:2 + jnz_<rel32>:6
+Size  : 13|13|14
+
+Instr : CJMP_ABS
+Compos: INSTR + test_al_al:2 + jz_<rel8>:2 + mov_rax_<imm64>:10 + jmp_rax:2
+Size  : 21|21|22
+
+Instr : CALL
+Compos: CALL_NEAR | CALL_FAR | CALL_ABS
+Size  : (10|10|11)|(10|10|11)|(17|17|18)
+
+Instr : CALL_NEAR
+Compos: INSTR + call_<rel32>:5
+Size  : 10|10|11
+
+Instr : CALL_FAR
+Compos: CALL_NEAR
+Size  : 10|10|11
+
+Instr : CALL_ABS
+Compos: INSTR + mov_rax_<imm64>:10 + call_rax:2
+Size  : 17|17|18
+
+Instr : RET
+Compos: RET_NEAR | RET_FAR | RET_ABS
+Size  : (6|6|7)|(6|6|7)|(6|6|7)
+
+Instr : RET_NEAR
+Compos: INSTR + ret:1
+Size  : 6|6|7
+
+Instr : RET_FAR
+Compos: RET_NEAR
+Size  : 6|6|7
+
+Instr : RET_ABS
+Compos: RET_NEAR
+Size  : 6|6|7
+
+Instr : FINISH
+Compos: FINISH_NEAR | FINISH_FAR | FINISH_ABS
+Size  : 1|1|1
+
+Instr : FINISH_NEAR
+Compos: ret:1
+Size  : 1
+
+Instr : FINISH_FAR
+Compos: FINISH_NEAR
+Size  : 1
+
+Instr : FINISH_ABS
+Compos: FINISH_NEAR
+Size  : 1
+*/
+
+// <private-to-arch>
+#define SZ_ENDBR64          4
+#define SZ_MOV_RAX_IMM64    10
+#define SZ_PUSH_RBX         1
+#define SZ_MOV_RBX_IMM64    10
+#define SZ_POP_RBX          1
+#define SZ_CALL_REL32       5
+#define SZ_CALL_RBX_OFFS32  6
+#define SZ_CALL_RAX         2
+#define SZ_JMP_REL8         2
+#define SZ_JMP_REL32        5
+#define SZ_JMP_RAX          2
+#define SZ_TEST_AL_AL       2
+#define SZ_JNZ_REL8         2
+#define SZ_JNZ_REL32        6
+#define SZ_JZ_REL8          2
+#define SZ_RET              1
+#define STK_FRAME_XTRA      16
+#define MAX_INSTR_SIZE      22
+#define SZ_CALL_BASIC       SZ_CALL_REL32
+// </private-to-arch>
+
+// <public-to-ezjit.c>
+#define RESERVE_EXTRA         256 // extra bytes in code buffer
+
+#define SZ_SET_FN_TBL_PTR     (SZ_PUSH_RBX + SZ_MOV_RBX_IMM64)
+#define TBL_PTR_OFFS          (SZ_ENDBR64 + SZ_PUSH_RBX)
+#define CODE_START            (SZ_ENDBR64 + SZ_SET_FN_TBL_PTR)
+
+#define SZ_CALL_TARGET        0
+
+#define SZ_INSTR_FN_CALL_NEAR SZ_CALL_BASIC
+#define SZ_INSTR_FN_CALL_FAR  SZ_CALL_BASIC
+#define SZ_INSTR_FN_CALL_ABS  SZ_CALL_RBX_OFFS32
+
+#define SZ_UJMP_POST_NEAR     SZ_JMP_REL8
+#define SZ_UJMP_POST_FAR      SZ_JMP_REL32
+#define SZ_UJMP_POST_ABS      (SZ_MOV_RAX_IMM64 + SZ_JMP_RAX)
+
+#define SZ_CJMP_POST_NEAR     (SZ_TEST_AL_AL + SZ_JNZ_REL8)
+#define SZ_CJMP_POST_FAR      (SZ_TEST_AL_AL + SZ_JNZ_REL32)
+#define SZ_CJMP_POST_ABS      \
+(SZ_TEST_AL_AL + SZ_JZ_REL8 + SZ_MOV_RAX_IMM64 + SZ_JMP_RAX)
+
+#define SZ_CALL_POST_NEAR     SZ_CALL_BASIC
+#define SZ_CALL_POST_FAR      SZ_CALL_BASIC
+#define SZ_CALL_POST_ABS      (SZ_MOV_RAX_IMM64 + SZ_CALL_RAX)
+
+#define SZ_RET_POST           SZ_RET
+#define SZ_FINISH_POST        (SZ_POP_RBX + SZ_RET)
+
+#define AVG_INSTR_SZ          10
+// </public-to-ezjit.c>
+
+typedef uint64_t uptr;
+typedef int64_t iptr;
+
+// <offs>
+static inline iptr arch_get_offs(
+	uptr dest,
+	uptr src,
+	size_t instr_size
+)
+{
+	return (iptr)(dest - (src + instr_size));
+}
+
+static inline bool arch_is_in_range_rel8(iptr dist)
+{
+	return (dist >= INT8_MIN && dist <= INT8_MAX);
+}
+static inline bool arch_is_in_range_rel32(iptr dist)
+{
+	return (dist >= INT32_MIN && dist <= INT32_MAX);
+}
+
+static inline bool arch_is_in_range_call_near(iptr dist)
+{
+	return arch_is_in_range_rel32(dist + SZ_CALL_BASIC);
+}
+static inline bool arch_is_in_range_call_far(iptr dist)
+{
+	return arch_is_in_range_call_near(dist);
+}
+
+static inline bool arch_is_in_range_ujmp_near(iptr dist)
+{
+	return arch_is_in_range_rel8(dist + SZ_UJMP_POST_NEAR);
+}
+static inline bool arch_is_in_range_ujmp_far(iptr dist)
+{
+	return arch_is_in_range_rel32(dist + SZ_UJMP_POST_FAR);
+}
+
+static inline bool arch_is_in_range_cjmp_near(iptr dist)
+{
+	return arch_is_in_range_rel8(dist + SZ_CJMP_POST_NEAR);
+}
+static inline bool arch_is_in_range_cjmp_far(iptr dist)
+{
+	return arch_is_in_range_rel32(dist + SZ_CJMP_POST_FAR);
+}
+// </offs>
+
+// <write>
+static inline void arch_write_byte(code_buff * cb, unsigned char val)
+{
+	cb->buff[cb->pos] = val;
+	cb->pos += sizeof(val);
+}
+static inline void arch_write_int8(code_buff * cb, int8_t val)
+{
+	*(int8_t *)(cb->buff + cb->pos) = val;
+	cb->pos += sizeof(val);
+}
+static inline void arch_write_int32(code_buff * cb, int32_t val)
+{
+	*(int32_t *)(cb->buff + cb->pos) = val;
+	cb->pos += sizeof(val);
+}
+static inline void arch_write_uint64(code_buff * cb, uint64_t val)
+{
+	*(uint64_t *)(cb->buff + cb->pos) = val;
+	cb->pos += sizeof(val);
+}
+// </write>
+// <emit>
+static void arch_emit_endbr64(code_buff * cb)
+{
+	// endbr64
+	arch_write_byte(cb, 0xF3);
+	arch_write_byte(cb, 0x0F);
+	arch_write_byte(cb, 0x1E);
+	arch_write_byte(cb, 0xFA);
+}
+
+static void arch_emit_mov_rax_imm64(code_buff * cb, uint64_t imm)
+{
+	// mov rax, <imm64>
+	arch_write_byte(cb, 0x48);
+	arch_write_byte(cb, 0xB8);
+	arch_write_uint64(cb, imm);
+}
+
+static void arch_emit_push_rbx(code_buff * cb)
+{
+	// push rbx
+	arch_write_byte(cb, 0x53);
+}
+static void arch_emit_mov_rbx_imm64(code_buff * cb, uint64_t imm)
+{
+	// mov rbx, <imm64>
+	arch_write_byte(cb, 0x48);
+	arch_write_byte(cb, 0xBB);
+	arch_write_uint64(cb, imm);
+}
+static void arch_emit_pop_rbx(code_buff * cb)
+{
+	// pop rbx
+	arch_write_byte(cb, 0x5B);
+}
+
+static void arch_emit_call_rel32(code_buff * cb, int32_t offs)
+{
+	// call <rel32>
+	arch_write_byte(cb, 0xE8);
+	arch_write_int32(cb, offs);
+}
+static void arch_emit_call_rbx_offs32(code_buff * cb, int32_t offs)
+{
+	// call [rbx + offs]
+	arch_write_byte(cb, 0xFF);
+	arch_write_byte(cb, 0x93);
+	arch_write_int32(cb, offs);
+}
+static void arch_emit_call_rax(code_buff * cb)
+{
+	// call rax
+	arch_write_byte(cb, 0xFF);
+	arch_write_byte(cb, 0xD0);
+}
+
+static void arch_emit_jmp_rel8(code_buff * cb, int8_t target)
+{
+	// jmp <rel8>
+	arch_write_byte(cb, 0xEB);
+	arch_write_int8(cb, target);
+}
+static void arch_emit_jmp_rel32(code_buff * cb, int32_t target)
+{
+	// jmp <rel32>
+	arch_write_byte(cb, 0xE9);
+	arch_write_int32(cb, target);
+}
+static void arch_emit_jmp_rax(code_buff * cb)
+{
+	// jmp <rax>
+	arch_write_byte(cb, 0xFF);
+	arch_write_byte(cb, 0xE0);
+}
+
+static void arch_emit_test(code_buff * cb)
+{
+	// test al, al
+	arch_write_byte(cb, 0x84);
+	arch_write_byte(cb, 0xC0);
+}
+
+static void arch_emit_jnz_rel8(code_buff * cb, int8_t target)
+{
+	// jnz <rel8>
+	arch_write_byte(cb, 0x75);
+	arch_write_int8(cb, target);
+}
+static void arch_emit_jnz_rel32(code_buff * cb, int32_t target)
+{
+	// jnz <rel32>
+	arch_write_byte(cb, 0x0F);
+	arch_write_byte(cb, 0x85);
+	arch_write_int32(cb, target);
+}
+
+static void arch_emit_jz_rel8(code_buff * cb, int8_t target)
+{
+	// jz <rel8>
+	arch_write_byte(cb, 0x74);
+	arch_write_int8(cb, target);
+}
+
+static void arch_emit_ret(code_buff * cb)
+{
+	// ret
+	arch_write_byte(cb, 0xC3);
+}
+// </emit>
+
+static void arch_cmpl_begin(code_buff * cb)
+{
+	arch_emit_endbr64(cb);
+	arch_emit_push_rbx(cb);
+	arch_emit_mov_rbx_imm64(cb, 0);
+}
+
+static void arch_cmpl_call_tgt(code_buff * cb)
+{
+	(void)cb;
+	// nothing to do
+}
+
+static void arch_cmpl_instr_fn_call(
+	code_buff * cb,
+	const ezj_ir_instr * instr,
+	const ezj_fn_tbl * fn_tbl
+)
+{
+	uint fn_tbl_entry = pezj_instr_get_fn_tbl_entry(instr);
+
+	if (pezj_instr_get_bmag_disc_instr_fn_call(instr) != PEZJ_BMAG_ABS)
+	{
+		uptr fn_addr = (uptr)pezj_fn_tbl_get_entry(fn_tbl, fn_tbl_entry);
+		uptr src = (uptr)cb->buff + pezj_instr_get_offs_in_code(instr);
+		iptr to = arch_get_offs(fn_addr, src, pezj_instr_get_half_size(instr));
+
+		arch_emit_call_rel32(cb, (int32_t)to);
+	}
+	else
+	{
+		arch_emit_call_rbx_offs32(cb, fn_tbl_entry * sizeof(ezj_void_fn));
+	}
+}
+
+static void arch_cmpl_ujmp(code_buff * cb, const ezj_ir_instr * instr)
+{
+	uptr dest = pezj_instr_get_offs_of_target(instr);
+	uptr src = pezj_instr_get_offs_in_code(instr);
+	iptr offs = arch_get_offs(dest, src, pezj_instr_get_full_size(instr));
+	byte jmp_bmag = pezj_instr_get_bmag_disc_post_call_branch(instr);
+
+	if (PEZJ_BMAG_NEAR == jmp_bmag)
+	{
+		arch_emit_jmp_rel8(cb, (int8_t)offs);
+	}
+	else if (PEZJ_BMAG_FAR == jmp_bmag)
+	{
+		arch_emit_jmp_rel32(cb, (int32_t)offs);
+	}
+	else
+	{
+		arch_emit_mov_rax_imm64(cb, (uint64_t)cb->buff + dest);
+		arch_emit_jmp_rax(cb);
+	}
+}
+
+static void arch_cmpl_cjmp(code_buff * cb, const ezj_ir_instr * instr)
+{
+	uptr dest = pezj_instr_get_offs_of_target(instr);
+	uptr src = pezj_instr_get_offs_in_code(instr);
+	iptr offs = arch_get_offs(dest, src, pezj_instr_get_full_size(instr));
+	byte jmp_bmag = pezj_instr_get_bmag_disc_post_call_branch(instr);
+
+	arch_emit_test(cb);
+	if (PEZJ_BMAG_NEAR == jmp_bmag)
+	{
+		arch_emit_jnz_rel8(cb, (int8_t)offs);
+	}
+	else if (PEZJ_BMAG_FAR == jmp_bmag)
+	{
+		arch_emit_jnz_rel32(cb, (int32_t)offs);
+	}
+	else
+	{
+		arch_emit_jz_rel8(cb, SZ_MOV_RAX_IMM64 + SZ_JMP_RAX);
+		arch_emit_mov_rax_imm64(cb, (uint64_t)cb->buff + dest);
+		arch_emit_jmp_rax(cb);
+	}
+}
+
+static void arch_cmpl_call(code_buff * cb, const ezj_ir_instr * instr)
+{
+	uptr dest = pezj_instr_get_offs_of_target(instr);
+	if (pezj_instr_get_bmag_disc_post_call_branch(instr) != PEZJ_BMAG_ABS)
+	{
+		uptr src = pezj_instr_get_offs_in_code(instr);
+		iptr to = arch_get_offs(dest, src, pezj_instr_get_full_size(instr));
+		arch_emit_call_rel32(cb, (int32_t)to);
+	}
+	else
+	{
+		arch_emit_mov_rax_imm64(cb, (uint64_t)cb->buff + dest);
+		arch_emit_call_rax(cb);
+	}
+}
+
+static void arch_cmpl_ret(code_buff * cb)
+{
+	arch_emit_ret(cb);
+}
+
+static void arch_cmpl_finish(code_buff * cb)
+{
+	arch_emit_pop_rbx(cb);
+	arch_emit_ret(cb);
+}
+
+static void arch_cmpl_fn_tbl_ptr(code_buff * cb, uptr fn_tbl_addr)
+{
+	arch_emit_mov_rbx_imm64(cb, (uint64_t)fn_tbl_addr);
+}
+// </x64>

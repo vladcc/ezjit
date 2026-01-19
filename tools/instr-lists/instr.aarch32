@@ -1,0 +1,50 @@
+INSTR      = INSTR_NEAR | INSTR_FAR | INSTR_ABS
+INSTR_NEAR = bl_<imm24>
+INSTR_FAR  = INSTR_NEAR
+INSTR_ABS  = ldr_r0_r4_<imm12> + bx_r0
+
+UJMP      = UJMP_NEAR | UJMP_FAR | UJMP_ABS
+UJMP_NEAR = INSTR + b_<imm24>
+UJMP_FAR  = INSTR + b_<imm24>
+UJMP_ABS  = INSTR + plc_r0_<imm32> + bx_r0
+
+CJMP      = CJMP_NEAR | CJMP_FAR | CJMP_ABS
+CJMP_NEAR = INSTR + tst_r0_r0 + bne_<imm24>
+CJMP_FAR  = INSTR + tst_r0_r0 + bne_<imm24>
+CJMP_ABS  = INSTR + tst_r0_r0 + beq_<imm24> + plc_r0_<imm32> + bx_r0
+
+CALL      = CALL_NEAR | CALL_FAR | CALL_ABS
+CALL_NEAR = INSTR + bl_<imm24>
+CALL_FAR  =	CALL_NEAR
+CALL_ABS  = INSTR + plc_r0_<imm32> + bx_r0
+
+RET      = RET_NEAR | RET_FAR | RET_ABS
+RET_NEAR = INSTR + mov_sp_fp + pop_fp_lr + bx_lr
+RET_FAR  = RET_NEAR
+RET_ABS  = RET_NEAR
+
+FINISH      = FINISH_NEAR | FINISH_FAR | FINISH_ABS
+FINISH_NEAR = pop_r4 + mov_sp_fp + pop_fp_lr + bx_lr
+FINISH_FAR  = FINISH_NEAR
+FINISH_ABS  = FINISH_NEAR
+
+#
+# plc_r0_<imm32> (place constant) is:
+# mov  r0, <imm16>
+# movt r0, <imm16>
+# Range: UINT32_MAX
+#
+bl_<imm24>         = 4
+blx_r0             = 4
+b_<imm24>          = 4
+bx_r0              = 4
+ldr_r0_r4_<imm12>  = 4
+plc_r0_<imm32>     = 8
+tst_r0_r0          = 4
+bne_<imm24>        = 4
+beq_<imm24>        = 4
+pop_r4             = 4
+mov_sp_fp          = 4
+pop_fp_lr          = 4
+bx_lr              = 4
+

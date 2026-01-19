@@ -1,0 +1,54 @@
+INSTR      = INSTR_NEAR | INSTR_FAR | INSTR_ABS
+INSTR_NEAR = jal_ra_<imm20>
+INSTR_FAR  = auipc_a0_<imm20> + jalr_ra_<imm12>_a0
+INSTR_ABS  = ld_a0_<imm12>_s2 + jalr_ra_<imm12>_a0
+
+UJMP      = UJMP_NEAR | UJMP_FAR | UJMP_ABS
+UJMP_NEAR = INSTR + jal_zero_<imm20>
+UJMP_FAR  = INSTR + auipc_a0_<imm20> + jalr_zero_<imm12>_a0
+UJMP_ABS  = INSTR + plc_a0_<imm52> + jalr_zero_<imm12>_a0
+
+CJMP      = CJMP_NEAR | CJMP_FAR | CJMP_ABS
+CJMP_NEAR = INSTR + bnez_a0_<imm12>
+CJMP_FAR  = INSTR + beqz_a0_<imm12> + jal_zero_<imm20>
+CJMP_ABS  = INSTR + beqz_a0_<imm12> + plc_a0_<imm52> + jalr_zero_<imm12>_a0
+
+CALL      = CALL_NEAR | CALL_FAR | CALL_ABS
+CALL_NEAR = INSTR + jal_ra_<imm20>
+CALL_FAR  = INSTR + auipc_a0_<imm20> + jalr_ra_<imm12>_a0
+CALL_ABS  = INSTR + plc_a0_<imm52> + jalr_ra_<imm12>_a0
+
+RET      = RET_NEAR | RET_FAR | RET_ABS
+RET_NEAR = INSTR + ld_ra_8_sp + ld_fp_0_sp + addi_sp_sp_16 + jalr_zero_0_ra
+RET_FAR  = RET_NEAR
+RET_ABS  = RET_NEAR
+
+FINISH      = FINISH_NEAR | FINISH_FAR | FINISH_ABS
+FINISH_NEAR = ld_s2_0_sp + addi_sp_sp_16 +  ld_ra_8_sp + ld_fp_0_sp + addi_sp_sp_16 + jalr_zero_0_ra
+FINISH_FAR  = FINISH_NEAR
+FINISH_ABS  = FINISH_NEAR
+#
+# plc_a0_<imm52> (place constant) is:
+# lui_a0_<imm20>     // 4
+# addi_a0_a0_<imm12> // 4
+# slli_a0_a0_32      // 4
+# addi_a0_a0_<imm12> // 4
+# slli_a0_a0_32      // 4
+# addi_a0_a0_<imm12> // 4
+# slli_a0_a0_32      // 4
+#
+jal_ra_<imm20>       = 4
+jalr_ra_<imm12>_a0   = 4
+jal_zero_<imm20>     = 4
+jalr_zero_<imm12>_a0 = 4
+ld_a0_<imm12>_s2     = 4
+auipc_a0_<imm20>     = 4
+plc_a0_<imm52>       = 28
+bnez_a0_<imm12>      = 4
+beqz_a0_<imm12>      = 4
+ld_s2_0_sp           = 4
+ld_ra_8_sp           = 4
+ld_fp_0_sp           = 4
+addi_sp_sp_16        = 4
+jalr_zero_0_ra       = 4
+

@@ -1,0 +1,11 @@
+#if defined(EZJIT_ARCH_X64)
+	#include "ezjit_x64.ic"
+#elif defined(EZJIT_ARCH_X86)
+	#include "ezjit_x86.ic"
+#elif defined(EZJIT_ARCH_AARCH64)
+	#include "ezjit_aarch64.ic"
+#elif defined(EZJIT_ARCH_AARCH32)
+	#include "ezjit_aarch32.ic"
+#elif defined(EZJIT_ARCH_RISCV64)
+	#include "ezjit_riscv64.ic"
+#endif

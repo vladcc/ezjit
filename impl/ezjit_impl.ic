@@ -1,0 +1,7 @@
+#include "arch/ezjit_arch.h"
+
+#if !defined(EZJIT_ARCH_NONE)
+	#include "ezjit_yes.ic"
+#else
+	#include "ezjit_no.ic"
+#endif

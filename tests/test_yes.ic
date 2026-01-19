@@ -1,0 +1,147 @@
+#include "test_vm.ic"
+
+// <tests>
+typedef struct bmags_tmpl {
+	pezj_bmag decl_instr_fn_call;
+	pezj_bmag decl_post_call_branch;
+	pezj_bmag disc_instr_fn_call;
+	pezj_bmag disc_post_call_branch;
+} bmags_tmpl;
+
+// <helpers>
+static bool test_check_bmags_(
+	const ezj_ir_instr * ir_instr,
+	const bmags_tmpl * tmpl,
+	int len
+)
+{
+	const bmags_tmpl * bmag = NULL;
+	const ezj_ir_instr * instr = NULL;
+	int sub_check = 0;
+
+	for (int i = 0; i < len; ++i)
+	{
+		bmag = tmpl + i;
+		instr = ir_instr + i;
+		sub_check = 0;
+
+		if (bmag->decl_instr_fn_call != instr->bmag_decl_instr_fn_call)
+			sub_check = 1;
+
+		if (bmag->decl_post_call_branch != instr->bmag_decl_post_call_branch)
+			sub_check = 2;
+
+		if (bmag->disc_instr_fn_call != instr->bmag_disc_instr_fn_call)
+			sub_check = 3;
+
+		if (bmag->disc_post_call_branch != instr->bmag_disc_post_call_branch)
+			sub_check = 4;
+
+		if (sub_check)
+		{
+			printf(
+				"\n%s(): ir instruction number: %d.%d\n",
+				__func__,
+				i,
+				sub_check
+			);
+			return false;
+		}
+	}
+	return true;
+}
+
+static bool test_compile_(
+	ezj_fn_tbl fn_tbl,
+	const byte * bin, int bin_size,
+	const bmags_tmpl * bmags,
+	mod_bmags mod
+)
+{
+	const ezj_ir * ir = get_static_ezj_ir();
+	const ezj_ir_instr * ir_instr = ir->instr_arr;
+	const code_buff * cb = get_static_code_buff();
+	const byte * code_addr = cb->code;
+
+	int code_len = 0;
+	check(0 == pezj_ir_get_len(ir));
+	check(1024 == pezj_ir_get_cap(ir));
+	check(compile(&fn_tbl, &code_len, mod));
+	check(12 == pezj_ir_get_len(ir));
+
+	if (bin_size)
+		check(bin_size == code_len);
+
+	if (bin)
+		check(0 == memcmp(bin, code_addr, code_len));
+
+	if (bmags)
+		check(test_check_bmags_(ir_instr, bmags, LOOP_INSTR_COUNT));
+
+	return true;
+}
+// </helpers>
+static bool test_version(void)
+{
+	check(1 == ezj_major_ver());
+	check(0 == ezj_minor_ver());
+	return true;
+}
+
+static bool test_ezj_buff_size(void)
+{
+	size_t buff_sz = 0;
+
+	check(0 == buff_sz);
+	buff_sz = ezj_ir_buff_size(11);
+	check(11 * sizeof(ezj_ir_instr) == buff_sz);
+
+	return true;
+}
+
+static bool test_ezj_is_available(void)
+{
+	check(true == ezj_is_available());
+	return true;
+}
+
+#include "impl/arch/ezjit_arch.h"
+
+#if defined(EZJIT_ARCH_X64)
+	#include "test_x64.ic"
+#elif defined(EZJIT_ARCH_X86)
+	#include "test_x86.ic"
+#elif defined(EZJIT_ARCH_AARCH64)
+	#include "test_aarch64.ic"
+#elif defined(EZJIT_ARCH_AARCH32)
+	#include "test_aarch32.ic"
+#elif defined(EZJIT_ARCH_RISCV64)
+	#include "test_riscv64.ic"
+#endif
+// </tests>
+
+static ftest tests[] = {
+	test_version,
+	test_ezj_buff_size,
+	test_ezj_is_available,
+	test_arch_ezj_code_buff_size,
+
+	test_arch_custom,
+
+	test_arch_compile_emit_natural_near_call_near_branch,
+	test_arch_compile_emit_natural_far_call_near_branch,
+	test_arch_compile_emit_natural_abs_call_near_branch,
+
+	test_arch_compile_emit_mod_near_call,
+	test_arch_compile_emit_mod_near_jmp,
+	test_arch_compile_emit_mod_near_call_near_jmp,
+
+	test_arch_compile_emit_mod_far_call,
+	test_arch_compile_emit_mod_far_jmp,
+	test_arch_compile_emit_mod_far_call_far_jmp,
+
+	test_arch_compile_emit_mod_abs_call,
+	test_arch_compile_emit_mod_abs_jmp,
+	test_arch_compile_emit_mod_abs_call_abs_jmp,
+};
+

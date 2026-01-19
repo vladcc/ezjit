@@ -1,0 +1,607 @@
+static bool test_arch_ezj_code_buff_size(void)
+{
+#define TEST_AVG_ISNTR_SZ  10
+#define TEST_TBL_SZ        (EZJ_FN_TBL_MAX_LEN * sizeof(ezj_void_fn))
+#define TEST_RESERVE_EXTRA 256
+
+	check(TEST_AVG_ISNTR_SZ*2 + TEST_TBL_SZ + TEST_RESERVE_EXTRA
+		== ezj_code_buff_size(1));
+	check(TEST_AVG_ISNTR_SZ*2*11 + TEST_TBL_SZ + TEST_RESERVE_EXTRA
+		== ezj_code_buff_size(11));
+	return true;
+
+#undef TEST_AVG_ISNTR_SZ
+#undef TEST_TBL_SZ
+#undef TEST_RESERVE_EXTRA
+}
+
+static ezj_fn_tbl tbl_near(void)
+{
+#define OFFS_NEAR_ADDVVV  1
+#define OFFS_NEAR_BGEQVV  2
+#define OFFS_NEAR_CALL    3
+#define OFFS_NEAR_JMP     4
+#define OFFS_NEAR_MOVRV   5
+#define OFFS_NEAR_POP     6
+#define OFFS_NEAR_PUSHA   7
+#define OFFS_NEAR_PUSHV   8
+#define OFFS_NEAR_RET     9
+#define OFFS_NEAR_FINISH  10
+
+	static ezj_fn_tbl_entry fn_arr[INSTR_END] = {0};
+	const code_buff * cb = get_static_code_buff();
+	const byte * code_addr = cb->code;
+
+	fn_arr[0].void_fn = (ezj_void_fn)(code_addr + OFFS_NEAR_ADDVVV);
+	fn_arr[1].bool_fn = (ezj_bool_fn)(code_addr + OFFS_NEAR_BGEQVV);
+	fn_arr[2].void_fn = (ezj_void_fn)(code_addr + OFFS_NEAR_CALL);
+	fn_arr[3].void_fn = (ezj_void_fn)(code_addr + OFFS_NEAR_JMP);
+	fn_arr[4].void_fn = (ezj_void_fn)(code_addr + OFFS_NEAR_MOVRV);
+	fn_arr[5].void_fn = (ezj_void_fn)(code_addr + OFFS_NEAR_POP);
+	fn_arr[6].void_fn = (ezj_void_fn)(code_addr + OFFS_NEAR_PUSHA);
+	fn_arr[7].void_fn = (ezj_void_fn)(code_addr + OFFS_NEAR_PUSHV);
+	fn_arr[8].void_fn = (ezj_void_fn)(code_addr + OFFS_NEAR_RET);
+	fn_arr[9].void_fn = (ezj_void_fn)(code_addr + OFFS_NEAR_FINISH);
+
+	ezj_fn_tbl fn_tbl = {
+		(ezj_fn_tbl_entry *)fn_arr,
+		sizeof(fn_arr)/sizeof(*fn_arr)
+	};
+
+	return fn_tbl;
+
+#undef OFFS_NEAR_ADDVVV
+#undef OFFS_NEAR_BGEQVV
+#undef OFFS_NEAR_CALL
+#undef OFFS_NEAR_JMP
+#undef OFFS_NEAR_MOVRV
+#undef OFFS_NEAR_POP
+#undef OFFS_NEAR_PUSHA
+#undef OFFS_NEAR_PUSHV
+#undef OFFS_NEAR_RET
+#undef OFFS_NEAR_FINISH
+}
+
+static ezj_fn_tbl tbl_far(void)
+{
+#define GB_1             (1*1024*1024*1024)
+#define OFFS_FAR_ADDVVV  (1+GB_1)
+#define OFFS_FAR_BGEQVV  (2+GB_1)
+#define OFFS_FAR_CALL    (3+GB_1)
+#define OFFS_FAR_JMP     (4+GB_1)
+#define OFFS_FAR_MOVRV   (5+GB_1)
+#define OFFS_FAR_POP     (6+GB_1)
+#define OFFS_FAR_PUSHA   (7+GB_1)
+#define OFFS_FAR_PUSHV   (8+GB_1)
+#define OFFS_FAR_RET     (9+GB_1)
+#define OFFS_FAR_FINISH  (10+GB_1)
+
+	static ezj_fn_tbl_entry fn_arr[INSTR_END] = {0};
+	const code_buff * cb = get_static_code_buff();
+	const byte * code_addr = cb->code;
+
+	fn_arr[0].void_fn = (ezj_void_fn)(code_addr + OFFS_FAR_ADDVVV);
+	fn_arr[1].bool_fn = (ezj_bool_fn)(code_addr + OFFS_FAR_BGEQVV);
+	fn_arr[2].void_fn = (ezj_void_fn)(code_addr + OFFS_FAR_CALL);
+	fn_arr[3].void_fn = (ezj_void_fn)(code_addr + OFFS_FAR_JMP);
+	fn_arr[4].void_fn = (ezj_void_fn)(code_addr + OFFS_FAR_MOVRV);
+	fn_arr[5].void_fn = (ezj_void_fn)(code_addr + OFFS_FAR_POP);
+	fn_arr[6].void_fn = (ezj_void_fn)(code_addr + OFFS_FAR_PUSHA);
+	fn_arr[7].void_fn = (ezj_void_fn)(code_addr + OFFS_FAR_PUSHV);
+	fn_arr[8].void_fn = (ezj_void_fn)(code_addr + OFFS_FAR_RET);
+	fn_arr[9].void_fn = (ezj_void_fn)(code_addr + OFFS_FAR_FINISH);
+
+	ezj_fn_tbl fn_tbl = {
+		(ezj_fn_tbl_entry *)fn_arr,
+		sizeof(fn_arr)/sizeof(*fn_arr)
+	};
+
+	return fn_tbl;
+
+#undef GB_1
+#undef OFFS_FAR_ADDVVV
+#undef OFFS_FAR_BGEQVV
+#undef OFFS_FAR_CALL
+#undef OFFS_FAR_JMP
+#undef OFFS_FAR_MOVRV
+#undef OFFS_FAR_POP
+#undef OFFS_FAR_PUSHA
+#undef OFFS_FAR_PUSHV
+#undef OFFS_FAR_RET
+#undef OFFS_FAR_FINISH
+}
+
+static ezj_fn_tbl tbl_abs(void)
+{
+#define GB_3             (3U*1024*1024*1024)
+#define OFFS_ABS_ADDVVV  (1+GB_3)
+#define OFFS_ABS_BGEQVV  (2+GB_3)
+#define OFFS_ABS_CALL    (3+GB_3)
+#define OFFS_ABS_JMP     (4+GB_3)
+#define OFFS_ABS_MOVRV   (5+GB_3)
+#define OFFS_ABS_POP     (6+GB_3)
+#define OFFS_ABS_PUSHA   (7+GB_3)
+#define OFFS_ABS_PUSHV   (8+GB_3)
+#define OFFS_ABS_RET     (9+GB_3)
+#define OFFS_ABS_FINISH  (10+GB_3)
+
+	static ezj_fn_tbl_entry fn_arr[INSTR_END] = {0};
+	const code_buff * cb = get_static_code_buff();
+	const byte * code_addr = cb->code;
+
+	fn_arr[0].void_fn = (ezj_void_fn)(code_addr + OFFS_ABS_ADDVVV);
+	fn_arr[1].bool_fn = (ezj_bool_fn)(code_addr + OFFS_ABS_BGEQVV);
+	fn_arr[2].void_fn = (ezj_void_fn)(code_addr + OFFS_ABS_CALL);
+	fn_arr[3].void_fn = (ezj_void_fn)(code_addr + OFFS_ABS_JMP);
+	fn_arr[4].void_fn = (ezj_void_fn)(code_addr + OFFS_ABS_MOVRV);
+	fn_arr[5].void_fn = (ezj_void_fn)(code_addr + OFFS_ABS_POP);
+	fn_arr[6].void_fn = (ezj_void_fn)(code_addr + OFFS_ABS_PUSHA);
+	fn_arr[7].void_fn = (ezj_void_fn)(code_addr + OFFS_ABS_PUSHV);
+	fn_arr[8].void_fn = (ezj_void_fn)(code_addr + OFFS_ABS_RET);
+	fn_arr[9].void_fn = (ezj_void_fn)(code_addr + OFFS_ABS_FINISH);
+
+	ezj_fn_tbl fn_tbl = {
+		(ezj_fn_tbl_entry *)fn_arr,
+		sizeof(fn_arr)/sizeof(*fn_arr)
+	};
+
+	return fn_tbl;
+
+#undef GB_3
+#undef OFFS_ABS_ADDVVV
+#undef OFFS_ABS_BGEQVV
+#undef OFFS_ABS_CALL
+#undef OFFS_ABS_JMP
+#undef OFFS_ABS_MOVRV
+#undef OFFS_ABS_POP
+#undef OFFS_ABS_PUSHA
+#undef OFFS_ABS_PUSHV
+#undef OFFS_ABS_RET
+#undef OFFS_ABS_FINISH
+}
+
+static const byte * code_near_near(int * out_size)
+{
+	static const byte bin[] = {
+	0xf3, 0x0f, 0x1e, 0xfa,                                     // endbr64
+	0x53,                                                       // push rbx
+	0x48, 0xbb, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // movabs rbx, 0
+	0xe8, 0xf4, 0xff, 0xff, 0xff,                               // call 8
+	0xe8, 0xef, 0xff, 0xff, 0xff,                               // call 8
+	0xe8, 0xe5, 0xff, 0xff, 0xff,                               // call 3
+	0xe8, 0x0c, 0x00, 0x00, 0x00,                               // call 0x2f
+	0xe8, 0xde, 0xff, 0xff, 0xff,                               // call 6
+	0xe8, 0xdd, 0xff, 0xff, 0xff,                               // call 0xa
+	0x5b,                                                       // pop rbx
+	0xc3,                                                       // ret
+	0xe8, 0xd3, 0xff, 0xff, 0xff,                               // call 7
+	0xe8, 0xc9, 0xff, 0xff, 0xff,                               // call 2
+	0x84, 0xc0,                                                 // test al, al
+	0x75, 0x0c,                                                 // jne 0x49
+	0xe8, 0xbf, 0xff, 0xff, 0xff,                               // call 1
+	0xe8, 0xbd, 0xff, 0xff, 0xff,                               // call 4
+	0xeb, 0xeb,                                                 // jmp 0x34
+	0xe8, 0xb7, 0xff, 0xff, 0xff,                               // call 5
+	0xe8, 0xb3, 0xff, 0xff, 0xff,                               // call 6
+	0xe8, 0xb1, 0xff, 0xff, 0xff,                               // call 9
+	0xc3,                                                       // ret
+	};
+
+	*out_size = sizeof(bin);
+	return bin;
+}
+
+static const byte * code_far_near(int * out_size)
+{
+	static const byte bin[] = {
+0xf3, 0x0f, 0x1e, 0xfa,                                     // endbr64
+0x53,                                                       // push rbx
+0x48, 0xbb, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // movabs rbx, 0
+0xe8, 0xf4, 0xff, 0xff, 0x3f,                               // call 0x40000008
+0xe8, 0xef, 0xff, 0xff, 0x3f,                               // call 0x40000008
+0xe8, 0xe5, 0xff, 0xff, 0x3f,                               // call 0x40000003
+0xe8, 0x0c, 0x00, 0x00, 0x00,                               // call 0x2f
+0xe8, 0xde, 0xff, 0xff, 0x3f,                               // call 0x40000006
+0xe8, 0xdd, 0xff, 0xff, 0x3f,                               // call 0x4000000a
+0x5b,                                                       // pop rbx
+0xc3,                                                       // ret
+0xe8, 0xd3, 0xff, 0xff, 0x3f,                               // call 0x40000007
+0xe8, 0xc9, 0xff, 0xff, 0x3f,                               // call 0x40000002
+0x84, 0xc0,                                                 // test al, al
+0x75, 0x0c,                                                 // jne 0x49
+0xe8, 0xbf, 0xff, 0xff, 0x3f,                               // call 0x40000001
+0xe8, 0xbd, 0xff, 0xff, 0x3f,                               // call 0x40000004
+0xeb, 0xeb,                                                 // jmp 0x34
+0xe8, 0xb7, 0xff, 0xff, 0x3f,                               // call 0x40000005
+0xe8, 0xb3, 0xff, 0xff, 0x3f,                               // call 0x40000006
+0xe8, 0xb1, 0xff, 0xff, 0x3f,                               // call 0x40000009
+0xc3,                                                       // ret
+	};
+
+	*out_size = sizeof(bin);
+	return bin;
+}
+
+static const byte * code_near_far(int * out_size)
+{
+	static const byte bin[] = {
+0xf3, 0x0f, 0x1e, 0xfa,                                     // endbr64
+0x53,                                                       // push rbx
+0x48, 0xbb, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // movabs rbx, 0
+0xe8, 0xf4, 0xff, 0xff, 0x3f,                               // call 0x40000008
+0xe8, 0xef, 0xff, 0xff, 0x3f,                               // call 0x40000008
+0xe8, 0xe5, 0xff, 0xff, 0x3f,                               // call 0x40000003
+0xe8, 0x0c, 0x00, 0x00, 0x00,                               // call 0x2f
+0xe8, 0xde, 0xff, 0xff, 0x3f,                               // call 0x40000006
+0xe8, 0xdd, 0xff, 0xff, 0x3f,                               // call 0x4000000a
+0x5b,                                                       // pop rbx
+0xc3,                                                       // ret
+0xe8, 0xd3, 0xff, 0xff, 0x3f,                               // call 0x40000007
+0xe8, 0xc9, 0xff, 0xff, 0x3f,                               // call 0x40000002
+0x84, 0xc0,                                                 // test al, al
+0x0f, 0x85, 0x0f, 0x00, 0x00, 0x00,                         // jne 0x50
+0xe8, 0xbb, 0xff, 0xff, 0x3f,                               // call 0x40000001
+0xe8, 0xb9, 0xff, 0xff, 0x3f,                               // call 0x40000004
+0xe9, 0xe4, 0xff, 0xff, 0xff,                               // jmp 0x34
+0xe8, 0xb0, 0xff, 0xff, 0x3f,                               // call 0x40000005
+0xe8, 0xac, 0xff, 0xff, 0x3f,                               // call 0x40000006
+0xe8, 0xaa, 0xff, 0xff, 0x3f,                               // call 0x40000009
+0xc3,                                                       // ret
+	};
+
+	*out_size = sizeof(bin);
+	return bin;
+}
+
+static bool test_err_bmag_conflict_instr_fn_call_(void)
+{
+	const ezj_ir * ir = get_static_ezj_ir();
+
+	ezj_fn_tbl fn_tbl = tbl_abs();
+	int code_len = 0;
+	check(!compile(&fn_tbl, &code_len, modify_bmags_near_call));
+
+	ezj_err_code ec = EZJ_EC_NONE;
+	unsigned int instr_num = 100000;
+	const char * err_str = NULL;
+
+	ec = EZJ_EC_NONE;
+	check(EZJ_EC_NONE == ec);
+	ec = ezj_err(ir, NULL, NULL);
+	check(EZJ_EC_BMAG_CONFLICT == ec);
+
+	ec = EZJ_EC_NONE;
+	check(EZJ_EC_NONE == ec);
+	check(100000 == instr_num);
+	ec = ezj_err(ir, &instr_num, NULL);
+	check(EZJ_EC_BMAG_CONFLICT == ec);
+	check(0 == instr_num);
+
+	ec = EZJ_EC_NONE;
+	check(EZJ_EC_NONE == ec);
+	check(NULL == err_str);
+	ec = ezj_err(ir, NULL, &err_str);
+	check(EZJ_EC_BMAG_CONFLICT == ec);
+	check(err_str);
+	check(0 == strcmp(err_str,
+		"discovered branch magnitude larger than declared"));
+
+	ec = EZJ_EC_NONE;
+	instr_num = 100000;
+	err_str = NULL;
+	check(EZJ_EC_NONE == ec);
+	check(100000 == instr_num);
+	check(NULL == err_str);
+	ec = ezj_err(ir, &instr_num, &err_str);
+	check(EZJ_EC_BMAG_CONFLICT == ec);
+	check(0 == instr_num);
+	check(err_str);
+	check(0 == strcmp(err_str,
+		"discovered branch magnitude larger than declared"));
+
+	return true;
+}
+
+static bool test_arch_custom(void)
+{
+	check(test_err_bmag_conflict_instr_fn_call_());
+	return true;
+}
+
+static bool test_arch_compile_emit_natural_near_call_near_branch(void)
+{
+	bmags_tmpl bmags[LOOP_INSTR_COUNT] = {
+		{PEZJ_BMAG_NONE, PEZJ_BMAG_NONE, PEZJ_BMAG_NEAR, PEZJ_BMAG_NONE}, // 0
+		{PEZJ_BMAG_NONE, PEZJ_BMAG_NONE, PEZJ_BMAG_NEAR, PEZJ_BMAG_NONE}, // 1
+		{PEZJ_BMAG_NONE, PEZJ_BMAG_NONE, PEZJ_BMAG_NEAR, PEZJ_BMAG_NEAR}, // 2
+		{PEZJ_BMAG_NONE, PEZJ_BMAG_NONE, PEZJ_BMAG_NEAR, PEZJ_BMAG_NONE}, // 3
+		{PEZJ_BMAG_NONE, PEZJ_BMAG_NONE, PEZJ_BMAG_NEAR, PEZJ_BMAG_NONE}, // 4
+		{PEZJ_BMAG_NONE, PEZJ_BMAG_NONE, PEZJ_BMAG_NEAR, PEZJ_BMAG_NONE}, // 5
+		{PEZJ_BMAG_NONE, PEZJ_BMAG_NONE, PEZJ_BMAG_NEAR, PEZJ_BMAG_NEAR}, // 6
+		{PEZJ_BMAG_NONE, PEZJ_BMAG_NONE, PEZJ_BMAG_NEAR, PEZJ_BMAG_NONE}, // 7
+		{PEZJ_BMAG_NONE, PEZJ_BMAG_NONE, PEZJ_BMAG_NEAR, PEZJ_BMAG_NEAR}, // 8
+		{PEZJ_BMAG_NONE, PEZJ_BMAG_NONE, PEZJ_BMAG_NEAR, PEZJ_BMAG_NONE}, // 9
+		{PEZJ_BMAG_NONE, PEZJ_BMAG_NONE, PEZJ_BMAG_NEAR, PEZJ_BMAG_NONE}, // 10
+		{PEZJ_BMAG_NONE, PEZJ_BMAG_NONE, PEZJ_BMAG_NEAR, PEZJ_BMAG_NONE}, // 11
+	};
+
+	ezj_fn_tbl fn_tbl = tbl_near();
+	int bin_size = 0;
+	const byte * bin = code_near_near(&bin_size);
+
+	check(test_compile_(fn_tbl, bin, bin_size, bmags, NULL));
+	return true;
+}
+
+static bool test_arch_compile_emit_natural_far_call_near_branch(void)
+{
+	bmags_tmpl bmags[LOOP_INSTR_COUNT] = {
+		{PEZJ_BMAG_NONE, PEZJ_BMAG_NONE, PEZJ_BMAG_NEAR, PEZJ_BMAG_NONE}, // 0
+		{PEZJ_BMAG_NONE, PEZJ_BMAG_NONE, PEZJ_BMAG_NEAR, PEZJ_BMAG_NONE}, // 1
+		{PEZJ_BMAG_NONE, PEZJ_BMAG_NONE, PEZJ_BMAG_NEAR, PEZJ_BMAG_NEAR}, // 2
+		{PEZJ_BMAG_NONE, PEZJ_BMAG_NONE, PEZJ_BMAG_NEAR, PEZJ_BMAG_NONE}, // 3
+		{PEZJ_BMAG_NONE, PEZJ_BMAG_NONE, PEZJ_BMAG_NEAR, PEZJ_BMAG_NONE}, // 4
+		{PEZJ_BMAG_NONE, PEZJ_BMAG_NONE, PEZJ_BMAG_NEAR, PEZJ_BMAG_NONE}, // 5
+		{PEZJ_BMAG_NONE, PEZJ_BMAG_NONE, PEZJ_BMAG_NEAR, PEZJ_BMAG_NEAR}, // 6
+		{PEZJ_BMAG_NONE, PEZJ_BMAG_NONE, PEZJ_BMAG_NEAR, PEZJ_BMAG_NONE}, // 7
+		{PEZJ_BMAG_NONE, PEZJ_BMAG_NONE, PEZJ_BMAG_NEAR, PEZJ_BMAG_NEAR}, // 8
+		{PEZJ_BMAG_NONE, PEZJ_BMAG_NONE, PEZJ_BMAG_NEAR, PEZJ_BMAG_NONE}, // 9
+		{PEZJ_BMAG_NONE, PEZJ_BMAG_NONE, PEZJ_BMAG_NEAR, PEZJ_BMAG_NONE}, // 10
+		{PEZJ_BMAG_NONE, PEZJ_BMAG_NONE, PEZJ_BMAG_NEAR, PEZJ_BMAG_NONE}, // 11
+	};
+
+	ezj_fn_tbl fn_tbl = tbl_far();
+	int bin_size = 0;
+	const byte * bin = code_far_near(&bin_size);
+
+	check(test_compile_(fn_tbl, bin, bin_size, bmags, NULL));
+	return true;
+}
+
+static bool test_arch_compile_emit_natural_abs_call_near_branch(void)
+{
+	bmags_tmpl bmags[LOOP_INSTR_COUNT] = {
+		{PEZJ_BMAG_NONE, PEZJ_BMAG_NONE, PEZJ_BMAG_ABS, PEZJ_BMAG_NONE}, // 0
+		{PEZJ_BMAG_NONE, PEZJ_BMAG_NONE, PEZJ_BMAG_ABS, PEZJ_BMAG_NONE}, // 1
+		{PEZJ_BMAG_NONE, PEZJ_BMAG_NONE, PEZJ_BMAG_ABS, PEZJ_BMAG_NEAR}, // 2
+		{PEZJ_BMAG_NONE, PEZJ_BMAG_NONE, PEZJ_BMAG_ABS, PEZJ_BMAG_NONE}, // 3
+		{PEZJ_BMAG_NONE, PEZJ_BMAG_NONE, PEZJ_BMAG_ABS, PEZJ_BMAG_NONE}, // 4
+		{PEZJ_BMAG_NONE, PEZJ_BMAG_NONE, PEZJ_BMAG_ABS, PEZJ_BMAG_NONE}, // 5
+		{PEZJ_BMAG_NONE, PEZJ_BMAG_NONE, PEZJ_BMAG_ABS, PEZJ_BMAG_NEAR}, // 6
+		{PEZJ_BMAG_NONE, PEZJ_BMAG_NONE, PEZJ_BMAG_ABS, PEZJ_BMAG_NONE}, // 7
+		{PEZJ_BMAG_NONE, PEZJ_BMAG_NONE, PEZJ_BMAG_ABS, PEZJ_BMAG_NEAR}, // 8
+		{PEZJ_BMAG_NONE, PEZJ_BMAG_NONE, PEZJ_BMAG_ABS, PEZJ_BMAG_NONE}, // 9
+		{PEZJ_BMAG_NONE, PEZJ_BMAG_NONE, PEZJ_BMAG_ABS, PEZJ_BMAG_NONE}, // 10
+		{PEZJ_BMAG_NONE, PEZJ_BMAG_NONE, PEZJ_BMAG_ABS, PEZJ_BMAG_NONE}, // 11
+	};
+
+	ezj_fn_tbl fn_tbl = tbl_abs();
+
+	// no binary comparison because of absolute addresses
+	check(test_compile_(fn_tbl, NULL, 184, bmags, NULL));
+	return true;
+}
+
+static bool test_arch_compile_emit_mod_near_call(void)
+{
+	bmags_tmpl bmags[LOOP_INSTR_COUNT] = {
+		{PEZJ_BMAG_NEAR, PEZJ_BMAG_NONE, PEZJ_BMAG_NEAR, PEZJ_BMAG_NONE}, // 0
+		{PEZJ_BMAG_NEAR, PEZJ_BMAG_NONE, PEZJ_BMAG_NEAR, PEZJ_BMAG_NONE}, // 1
+		{PEZJ_BMAG_NEAR, PEZJ_BMAG_NONE, PEZJ_BMAG_NEAR, PEZJ_BMAG_NEAR}, // 2
+		{PEZJ_BMAG_NEAR, PEZJ_BMAG_NONE, PEZJ_BMAG_NEAR, PEZJ_BMAG_NONE}, // 3
+		{PEZJ_BMAG_NEAR, PEZJ_BMAG_NONE, PEZJ_BMAG_NEAR, PEZJ_BMAG_NONE}, // 4
+		{PEZJ_BMAG_NEAR, PEZJ_BMAG_NONE, PEZJ_BMAG_NEAR, PEZJ_BMAG_NONE}, // 5
+		{PEZJ_BMAG_NEAR, PEZJ_BMAG_NONE, PEZJ_BMAG_NEAR, PEZJ_BMAG_NEAR}, // 6
+		{PEZJ_BMAG_NEAR, PEZJ_BMAG_NONE, PEZJ_BMAG_NEAR, PEZJ_BMAG_NONE}, // 7
+		{PEZJ_BMAG_NEAR, PEZJ_BMAG_NONE, PEZJ_BMAG_NEAR, PEZJ_BMAG_NEAR}, // 8
+		{PEZJ_BMAG_NEAR, PEZJ_BMAG_NONE, PEZJ_BMAG_NEAR, PEZJ_BMAG_NONE}, // 9
+		{PEZJ_BMAG_NEAR, PEZJ_BMAG_NONE, PEZJ_BMAG_NEAR, PEZJ_BMAG_NONE}, // 10
+		{PEZJ_BMAG_NEAR, PEZJ_BMAG_NONE, PEZJ_BMAG_NEAR, PEZJ_BMAG_NONE}, // 11
+	};
+
+	ezj_fn_tbl fn_tbl = tbl_near();
+	int bin_size = 0;
+	const byte * bin = code_near_near(&bin_size);
+
+	check(test_compile_(fn_tbl, bin, bin_size, bmags, modify_bmags_near_call));
+	return true;
+}
+
+static bool test_arch_compile_emit_mod_near_jmp(void)
+{
+	bmags_tmpl bmags[LOOP_INSTR_COUNT] = {
+		{PEZJ_BMAG_NONE, PEZJ_BMAG_NONE, PEZJ_BMAG_NEAR, PEZJ_BMAG_NONE}, // 0
+		{PEZJ_BMAG_NONE, PEZJ_BMAG_NONE, PEZJ_BMAG_NEAR, PEZJ_BMAG_NONE}, // 1
+		{PEZJ_BMAG_NONE, PEZJ_BMAG_NEAR, PEZJ_BMAG_NEAR, PEZJ_BMAG_NEAR}, // 2
+		{PEZJ_BMAG_NONE, PEZJ_BMAG_NONE, PEZJ_BMAG_NEAR, PEZJ_BMAG_NONE}, // 3
+		{PEZJ_BMAG_NONE, PEZJ_BMAG_NEAR, PEZJ_BMAG_NEAR, PEZJ_BMAG_NEAR}, // 4
+		{PEZJ_BMAG_NONE, PEZJ_BMAG_NONE, PEZJ_BMAG_NEAR, PEZJ_BMAG_NONE}, // 5
+		{PEZJ_BMAG_NONE, PEZJ_BMAG_NEAR, PEZJ_BMAG_NEAR, PEZJ_BMAG_NEAR}, // 6
+		{PEZJ_BMAG_NONE, PEZJ_BMAG_NONE, PEZJ_BMAG_NEAR, PEZJ_BMAG_NONE}, // 7
+		{PEZJ_BMAG_NONE, PEZJ_BMAG_NEAR, PEZJ_BMAG_NEAR, PEZJ_BMAG_NEAR}, // 8
+		{PEZJ_BMAG_NONE, PEZJ_BMAG_NONE, PEZJ_BMAG_NEAR, PEZJ_BMAG_NONE}, // 9
+		{PEZJ_BMAG_NONE, PEZJ_BMAG_NONE, PEZJ_BMAG_NEAR, PEZJ_BMAG_NONE}, // 10
+		{PEZJ_BMAG_NONE, PEZJ_BMAG_NEAR, PEZJ_BMAG_NEAR, PEZJ_BMAG_NEAR}, // 11
+	};
+
+	ezj_fn_tbl fn_tbl = tbl_near();
+	int bin_size = 0;
+	const byte * bin = code_near_near(&bin_size);
+
+	check(test_compile_(fn_tbl, bin, bin_size, bmags, modify_bmags_near_jmp));
+	return true;
+}
+
+static bool test_arch_compile_emit_mod_near_call_near_jmp(void)
+{
+	bmags_tmpl bmags[LOOP_INSTR_COUNT] = {
+		{PEZJ_BMAG_NEAR, PEZJ_BMAG_NONE, PEZJ_BMAG_NEAR, PEZJ_BMAG_NONE}, // 0
+		{PEZJ_BMAG_NEAR, PEZJ_BMAG_NONE, PEZJ_BMAG_NEAR, PEZJ_BMAG_NONE}, // 1
+		{PEZJ_BMAG_NEAR, PEZJ_BMAG_NEAR, PEZJ_BMAG_NEAR, PEZJ_BMAG_NEAR}, // 2
+		{PEZJ_BMAG_NEAR, PEZJ_BMAG_NONE, PEZJ_BMAG_NEAR, PEZJ_BMAG_NONE}, // 3
+		{PEZJ_BMAG_NEAR, PEZJ_BMAG_NEAR, PEZJ_BMAG_NEAR, PEZJ_BMAG_NEAR}, // 4
+		{PEZJ_BMAG_NEAR, PEZJ_BMAG_NONE, PEZJ_BMAG_NEAR, PEZJ_BMAG_NONE}, // 5
+		{PEZJ_BMAG_NEAR, PEZJ_BMAG_NEAR, PEZJ_BMAG_NEAR, PEZJ_BMAG_NEAR}, // 6
+		{PEZJ_BMAG_NEAR, PEZJ_BMAG_NONE, PEZJ_BMAG_NEAR, PEZJ_BMAG_NONE}, // 7
+		{PEZJ_BMAG_NEAR, PEZJ_BMAG_NEAR, PEZJ_BMAG_NEAR, PEZJ_BMAG_NEAR}, // 8
+		{PEZJ_BMAG_NEAR, PEZJ_BMAG_NONE, PEZJ_BMAG_NEAR, PEZJ_BMAG_NONE}, // 9
+		{PEZJ_BMAG_NEAR, PEZJ_BMAG_NONE, PEZJ_BMAG_NEAR, PEZJ_BMAG_NONE}, // 10
+		{PEZJ_BMAG_NEAR, PEZJ_BMAG_NEAR, PEZJ_BMAG_NEAR, PEZJ_BMAG_NEAR}, // 11
+	};
+
+	ezj_fn_tbl fn_tbl = tbl_near();
+	int bin_size = 0;
+	const byte * bin = code_near_near(&bin_size);
+
+	check(test_compile_(fn_tbl, bin, bin_size, bmags,
+		modify_bmags_near_call_jmp));
+	return true;
+}
+
+static bool test_arch_compile_emit_mod_far_call(void)
+{
+	bmags_tmpl bmags[LOOP_INSTR_COUNT] = {
+		{PEZJ_BMAG_FAR, PEZJ_BMAG_NONE, PEZJ_BMAG_FAR, PEZJ_BMAG_NONE}, // 0
+		{PEZJ_BMAG_FAR, PEZJ_BMAG_NONE, PEZJ_BMAG_FAR, PEZJ_BMAG_NONE}, // 1
+		{PEZJ_BMAG_FAR, PEZJ_BMAG_NONE, PEZJ_BMAG_FAR, PEZJ_BMAG_NEAR}, // 2
+		{PEZJ_BMAG_FAR, PEZJ_BMAG_NONE, PEZJ_BMAG_FAR, PEZJ_BMAG_NONE}, // 3
+		{PEZJ_BMAG_FAR, PEZJ_BMAG_NONE, PEZJ_BMAG_FAR, PEZJ_BMAG_NONE}, // 4
+		{PEZJ_BMAG_FAR, PEZJ_BMAG_NONE, PEZJ_BMAG_FAR, PEZJ_BMAG_NONE}, // 5
+		{PEZJ_BMAG_FAR, PEZJ_BMAG_NONE, PEZJ_BMAG_FAR, PEZJ_BMAG_NEAR}, // 6
+		{PEZJ_BMAG_FAR, PEZJ_BMAG_NONE, PEZJ_BMAG_FAR, PEZJ_BMAG_NONE}, // 7
+		{PEZJ_BMAG_FAR, PEZJ_BMAG_NONE, PEZJ_BMAG_FAR, PEZJ_BMAG_NEAR}, // 8
+		{PEZJ_BMAG_FAR, PEZJ_BMAG_NONE, PEZJ_BMAG_FAR, PEZJ_BMAG_NONE}, // 9
+		{PEZJ_BMAG_FAR, PEZJ_BMAG_NONE, PEZJ_BMAG_FAR, PEZJ_BMAG_NONE}, // 10
+		{PEZJ_BMAG_FAR, PEZJ_BMAG_NONE, PEZJ_BMAG_FAR, PEZJ_BMAG_NONE}, // 11
+	};
+
+	ezj_fn_tbl fn_tbl = tbl_far();
+	int bin_size = 0;
+	const byte * bin = code_far_near(&bin_size);
+
+	check(test_compile_(fn_tbl, bin, bin_size, bmags, modify_bmags_far_call));
+	return true;
+}
+
+static bool test_arch_compile_emit_mod_far_jmp(void)
+{
+	bmags_tmpl bmags[LOOP_INSTR_COUNT] = {
+		{PEZJ_BMAG_NONE, PEZJ_BMAG_NONE, PEZJ_BMAG_NEAR, PEZJ_BMAG_NONE}, // 0
+		{PEZJ_BMAG_NONE, PEZJ_BMAG_NONE, PEZJ_BMAG_NEAR, PEZJ_BMAG_NONE}, // 1
+		{PEZJ_BMAG_NONE, PEZJ_BMAG_FAR,  PEZJ_BMAG_NEAR, PEZJ_BMAG_FAR }, // 2
+		{PEZJ_BMAG_NONE, PEZJ_BMAG_NONE, PEZJ_BMAG_NEAR, PEZJ_BMAG_NONE}, // 3
+		{PEZJ_BMAG_NONE, PEZJ_BMAG_FAR,  PEZJ_BMAG_NEAR, PEZJ_BMAG_FAR }, // 4
+		{PEZJ_BMAG_NONE, PEZJ_BMAG_NONE, PEZJ_BMAG_NEAR, PEZJ_BMAG_NONE}, // 5
+		{PEZJ_BMAG_NONE, PEZJ_BMAG_FAR,  PEZJ_BMAG_NEAR, PEZJ_BMAG_FAR }, // 6
+		{PEZJ_BMAG_NONE, PEZJ_BMAG_NONE, PEZJ_BMAG_NEAR, PEZJ_BMAG_NONE}, // 7
+		{PEZJ_BMAG_NONE, PEZJ_BMAG_FAR,  PEZJ_BMAG_NEAR, PEZJ_BMAG_FAR }, // 8
+		{PEZJ_BMAG_NONE, PEZJ_BMAG_NONE, PEZJ_BMAG_NEAR, PEZJ_BMAG_NONE}, // 9
+		{PEZJ_BMAG_NONE, PEZJ_BMAG_NONE, PEZJ_BMAG_NEAR, PEZJ_BMAG_NONE}, // 10
+		{PEZJ_BMAG_NONE, PEZJ_BMAG_FAR,  PEZJ_BMAG_NEAR, PEZJ_BMAG_FAR }, // 11
+	};
+
+	ezj_fn_tbl fn_tbl = tbl_far();
+	int bin_size = 0;
+	const byte * bin = code_near_far(&bin_size);
+
+	check(test_compile_(fn_tbl, bin, bin_size, bmags, modify_bmags_far_jmp));
+	return true;
+}
+
+static bool test_arch_compile_emit_mod_far_call_far_jmp(void)
+{
+	bmags_tmpl bmags[LOOP_INSTR_COUNT] = {
+		{PEZJ_BMAG_FAR, PEZJ_BMAG_NONE, PEZJ_BMAG_FAR, PEZJ_BMAG_NONE}, // 0
+		{PEZJ_BMAG_FAR, PEZJ_BMAG_NONE, PEZJ_BMAG_FAR, PEZJ_BMAG_NONE}, // 1
+		{PEZJ_BMAG_FAR, PEZJ_BMAG_FAR,  PEZJ_BMAG_FAR, PEZJ_BMAG_FAR }, // 2
+		{PEZJ_BMAG_FAR, PEZJ_BMAG_NONE, PEZJ_BMAG_FAR, PEZJ_BMAG_NONE}, // 3
+		{PEZJ_BMAG_FAR, PEZJ_BMAG_FAR,  PEZJ_BMAG_FAR, PEZJ_BMAG_FAR }, // 4
+		{PEZJ_BMAG_FAR, PEZJ_BMAG_NONE, PEZJ_BMAG_FAR, PEZJ_BMAG_NONE}, // 5
+		{PEZJ_BMAG_FAR, PEZJ_BMAG_FAR,  PEZJ_BMAG_FAR, PEZJ_BMAG_FAR }, // 6
+		{PEZJ_BMAG_FAR, PEZJ_BMAG_NONE, PEZJ_BMAG_FAR, PEZJ_BMAG_NONE}, // 7
+		{PEZJ_BMAG_FAR, PEZJ_BMAG_FAR,  PEZJ_BMAG_FAR, PEZJ_BMAG_FAR }, // 8
+		{PEZJ_BMAG_FAR, PEZJ_BMAG_NONE, PEZJ_BMAG_FAR, PEZJ_BMAG_NONE}, // 9
+		{PEZJ_BMAG_FAR, PEZJ_BMAG_NONE, PEZJ_BMAG_FAR, PEZJ_BMAG_NONE}, // 10
+		{PEZJ_BMAG_FAR, PEZJ_BMAG_FAR,  PEZJ_BMAG_FAR, PEZJ_BMAG_FAR }, // 11
+	};
+
+	ezj_fn_tbl fn_tbl = tbl_far();
+	int bin_size = 0;
+	const byte * bin = code_near_far(&bin_size);
+
+	check(test_compile_(fn_tbl, bin, bin_size, bmags,
+		modify_bmags_far_call_jmp));
+	return true;
+}
+
+static bool test_arch_compile_emit_mod_abs_call(void)
+{
+	bmags_tmpl bmags[LOOP_INSTR_COUNT] = {
+		{PEZJ_BMAG_ABS, PEZJ_BMAG_NONE, PEZJ_BMAG_ABS, PEZJ_BMAG_NONE}, // 0
+		{PEZJ_BMAG_ABS, PEZJ_BMAG_NONE, PEZJ_BMAG_ABS, PEZJ_BMAG_NONE}, // 1
+		{PEZJ_BMAG_ABS, PEZJ_BMAG_NONE, PEZJ_BMAG_ABS, PEZJ_BMAG_NEAR}, // 2
+		{PEZJ_BMAG_ABS, PEZJ_BMAG_NONE, PEZJ_BMAG_ABS, PEZJ_BMAG_NONE}, // 3
+		{PEZJ_BMAG_ABS, PEZJ_BMAG_NONE, PEZJ_BMAG_ABS, PEZJ_BMAG_NONE}, // 4
+		{PEZJ_BMAG_ABS, PEZJ_BMAG_NONE, PEZJ_BMAG_ABS, PEZJ_BMAG_NONE}, // 5
+		{PEZJ_BMAG_ABS, PEZJ_BMAG_NONE, PEZJ_BMAG_ABS, PEZJ_BMAG_NEAR}, // 6
+		{PEZJ_BMAG_ABS, PEZJ_BMAG_NONE, PEZJ_BMAG_ABS, PEZJ_BMAG_NONE}, // 7
+		{PEZJ_BMAG_ABS, PEZJ_BMAG_NONE, PEZJ_BMAG_ABS, PEZJ_BMAG_NEAR}, // 8
+		{PEZJ_BMAG_ABS, PEZJ_BMAG_NONE, PEZJ_BMAG_ABS, PEZJ_BMAG_NONE}, // 9
+		{PEZJ_BMAG_ABS, PEZJ_BMAG_NONE, PEZJ_BMAG_ABS, PEZJ_BMAG_NONE}, // 10
+		{PEZJ_BMAG_ABS, PEZJ_BMAG_NONE, PEZJ_BMAG_ABS, PEZJ_BMAG_NONE}, // 11
+	};
+
+	ezj_fn_tbl fn_tbl = tbl_near();
+
+	check(test_compile_(fn_tbl, NULL, (101 + 3 + 80), bmags,
+		modify_bmags_abs_call));
+	return true;
+}
+
+static bool test_arch_compile_emit_mod_abs_jmp(void)
+{
+	bmags_tmpl bmags[LOOP_INSTR_COUNT] = {
+		{PEZJ_BMAG_NONE, PEZJ_BMAG_NONE, PEZJ_BMAG_NEAR, PEZJ_BMAG_NONE}, // 0
+		{PEZJ_BMAG_NONE, PEZJ_BMAG_NONE, PEZJ_BMAG_NEAR, PEZJ_BMAG_NONE}, // 1
+		{PEZJ_BMAG_NONE, PEZJ_BMAG_ABS,  PEZJ_BMAG_NEAR, PEZJ_BMAG_ABS }, // 2
+		{PEZJ_BMAG_NONE, PEZJ_BMAG_NONE, PEZJ_BMAG_NEAR, PEZJ_BMAG_NONE}, // 3
+		{PEZJ_BMAG_NONE, PEZJ_BMAG_ABS,  PEZJ_BMAG_NEAR, PEZJ_BMAG_ABS }, // 4
+		{PEZJ_BMAG_NONE, PEZJ_BMAG_NONE, PEZJ_BMAG_NEAR, PEZJ_BMAG_NONE}, // 5
+		{PEZJ_BMAG_NONE, PEZJ_BMAG_ABS,  PEZJ_BMAG_NEAR, PEZJ_BMAG_ABS }, // 6
+		{PEZJ_BMAG_NONE, PEZJ_BMAG_NONE, PEZJ_BMAG_NEAR, PEZJ_BMAG_NONE}, // 7
+		{PEZJ_BMAG_NONE, PEZJ_BMAG_ABS,  PEZJ_BMAG_NEAR, PEZJ_BMAG_ABS }, // 8
+		{PEZJ_BMAG_NONE, PEZJ_BMAG_NONE, PEZJ_BMAG_NEAR, PEZJ_BMAG_NONE}, // 9
+		{PEZJ_BMAG_NONE, PEZJ_BMAG_NONE, PEZJ_BMAG_NEAR, PEZJ_BMAG_NONE}, // 10
+		{PEZJ_BMAG_NONE, PEZJ_BMAG_ABS,  PEZJ_BMAG_NEAR, PEZJ_BMAG_ABS }, // 11
+	};
+
+	ezj_fn_tbl fn_tbl = tbl_far();
+
+	check(test_compile_(fn_tbl, NULL, 118, bmags, modify_bmags_abs_jmp));
+	return true;
+}
+
+static bool test_arch_compile_emit_mod_abs_call_abs_jmp(void)
+{
+	bmags_tmpl bmags[LOOP_INSTR_COUNT] = {
+		{PEZJ_BMAG_ABS, PEZJ_BMAG_NONE, PEZJ_BMAG_ABS, PEZJ_BMAG_NONE}, // 0
+		{PEZJ_BMAG_ABS, PEZJ_BMAG_NONE, PEZJ_BMAG_ABS, PEZJ_BMAG_NONE}, // 1
+		{PEZJ_BMAG_ABS, PEZJ_BMAG_ABS,  PEZJ_BMAG_ABS, PEZJ_BMAG_ABS }, // 2
+		{PEZJ_BMAG_ABS, PEZJ_BMAG_NONE, PEZJ_BMAG_ABS, PEZJ_BMAG_NONE}, // 3
+		{PEZJ_BMAG_ABS, PEZJ_BMAG_ABS,  PEZJ_BMAG_ABS, PEZJ_BMAG_ABS }, // 4
+		{PEZJ_BMAG_ABS, PEZJ_BMAG_NONE, PEZJ_BMAG_ABS, PEZJ_BMAG_NONE}, // 5
+		{PEZJ_BMAG_ABS, PEZJ_BMAG_ABS,  PEZJ_BMAG_ABS, PEZJ_BMAG_ABS }, // 6
+		{PEZJ_BMAG_ABS, PEZJ_BMAG_NONE, PEZJ_BMAG_ABS, PEZJ_BMAG_NONE}, // 7
+		{PEZJ_BMAG_ABS, PEZJ_BMAG_ABS,  PEZJ_BMAG_ABS, PEZJ_BMAG_ABS }, // 8
+		{PEZJ_BMAG_ABS, PEZJ_BMAG_NONE, PEZJ_BMAG_ABS, PEZJ_BMAG_NONE}, // 9
+		{PEZJ_BMAG_ABS, PEZJ_BMAG_NONE, PEZJ_BMAG_ABS, PEZJ_BMAG_NONE}, // 10
+		{PEZJ_BMAG_ABS, PEZJ_BMAG_ABS,  PEZJ_BMAG_ABS, PEZJ_BMAG_ABS }, // 11
+	};
+
+	ezj_fn_tbl fn_tbl = tbl_far();
+
+	check(test_compile_(fn_tbl, NULL, (130 + 6 + 80), bmags,
+		modify_bmags_abs_call_jmp));
+	return true;
+}
+

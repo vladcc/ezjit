@@ -1,0 +1,336 @@
+#include "ezjit.h"
+
+#include <sys/mman.h>
+#include <unistd.h>
+
+#include <stdlib.h>
+#include <string.h>
+#include <stdint.h>
+
+typedef unsigned char byte;
+typedef unsigned int uint;
+
+typedef void (*entry_point)(void);
+typedef void (*mod_bmags)(ezj_ir * ir);
+
+static void err_quit(const char * msg)
+{
+	fprintf(stderr, "%s\n", msg);
+	exit(EXIT_FAILURE);
+}
+
+// <code-buffer>
+typedef struct code_buff {
+	byte * code;
+	size_t size;
+} code_buff;
+
+static code_buff * get_static_code_buff(void)
+{
+#define CODE_BUFF_SZ (1024*1024*8)
+
+	static code_buff cbuff = {0};
+	static byte code_arr[CODE_BUFF_SZ] = {0};
+
+	int pg_sz = getpagesize();
+	int act_sz = CODE_BUFF_SZ;
+	int mod = (int)((uintptr_t)code_arr % (unsigned)pg_sz);
+	int left_over = 0;
+	byte * cptr = code_arr;
+
+	if (mod)
+	{
+		left_over = pg_sz - mod;
+		cptr += left_over;
+		act_sz = CODE_BUFF_SZ - pg_sz;
+	}
+
+	if (act_sz <= 0)
+		return NULL;
+
+	if (mprotect(cptr, (size_t)act_sz, PROT_READ|PROT_WRITE) == -1)
+	{
+		perror("mprotect");
+		return NULL;
+	}
+
+	memset(code_arr, 0, sizeof(code_arr));
+	cbuff.code = cptr;
+	cbuff.size = (size_t)act_sz;
+
+	return &cbuff;
+
+#undef CODE_BUFF_SZ
+}
+
+static code_buff * get_rw(void)
+{
+	return get_static_code_buff();
+}
+
+static void make_rx(void * mem, size_t size)
+{
+	if (mprotect(mem, size, PROT_READ|PROT_EXEC) == -1)
+	{
+		perror("mprotect");
+		exit(EXIT_FAILURE);
+	}
+}
+// </code-buffer>
+
+// <vm>
+typedef enum instr_type {
+	ADDVVV,    //  0
+	BGEQVV,    //  1
+	CALL,      //  2
+	JMP,       //  3
+	MOVRV,     //  4
+	POP,       //  5
+	PUSHA,     //  6
+	PUSHV,     //  7
+	RET,       //  8
+	FINISH,    //  9
+	INSTR_END, //  10
+} instr_type;
+
+typedef struct vm_instr {
+	instr_type type;
+	int32_t op_a;
+	int32_t op_b;
+	int32_t op_c;
+	void * ptr; // for direct threaded
+} vm_instr;
+
+typedef struct vm_code {
+	vm_instr * code;
+	size_t size;
+} vm_code;
+
+typedef size_t word;
+
+#define VM_STK_SZ 1024
+
+static struct {
+	vm_code * code;
+	vm_instr * ip;
+	word * bp;
+	word * sp;
+	word rret;
+	word stack[VM_STK_SZ];
+	bool done;
+} vm;
+
+static vm_code * vm_get_code(void)
+{
+	return vm.code;
+}
+
+#define LOOP_INSTR_COUNT 12
+
+static vm_code * vm_make_code(void)
+{
+	static vm_instr loop[LOOP_INSTR_COUNT] = {
+		{PUSHV,   -3,  0,   0,   NULL}, // 0
+		{PUSHV,   -2,  0,   0,   NULL}, // 1
+		{CALL,    3,   0,   0,   NULL}, // 2
+		{POP,     2,   0,   0,   NULL}, // 3
+		{FINISH,  0,   0,   0,   NULL}, // 4
+		{PUSHA,   1,   0,   0,   NULL}, // 5
+		{BGEQVV,  1,   -2,  3,   NULL}, // 6
+		{ADDVVV,  1,   1,   -3,  NULL}, // 7
+		{JMP,     -2,  0,   0,   NULL}, // 8
+		{MOVRV,   0,   1,   0,   NULL}, // 9
+		{POP,     1,   0,   0,   NULL}, // 10
+		{RET,     0,   0,   0,   NULL}, // 11
+	};
+
+	static vm_code ret = {loop, sizeof(loop)/sizeof(*loop)};
+	return &ret;
+}
+
+#define NUM_INSTR 1024
+
+static ezj_ir * get_static_ezj_ir(void)
+{
+	static ezj_ir ir = {0};
+	memset(&ir, 0, sizeof(ir));
+	static ezj_ir_instr ir_buff[NUM_INSTR] = {0};
+	memset(ir_buff, 0, sizeof(ir_buff));
+
+	size_t ir_buff_cap = NUM_INSTR;
+	size_t ir_buff_sz = ezj_ir_buff_size(NUM_INSTR);
+	if (ir_buff_cap * sizeof(ezj_ir_instr) < ir_buff_sz)
+		err_quit("ir buffer too small");
+
+	ir = ezj_ir_init(ir_buff, ir_buff_cap);
+
+	return &ir;
+}
+
+static ezj_ir * vm_compile_ir(vm_code * prog)
+{
+	ezj_ir * ir = get_static_ezj_ir();
+
+	vm_instr * instr = NULL;
+	unsigned int itype = 0;
+	for (size_t i = 0, end = prog->size; i < end; ++i)
+	{
+		instr = prog->code + i;
+		itype = instr->type;
+		switch (itype)
+		{
+			case ADDVVV: ezj_ir_make_instr(ir, itype); continue;
+			case BGEQVV: ezj_ir_make_cjmp(ir, itype, instr->op_c); continue;
+			case CALL:   ezj_ir_make_call(ir, itype, instr->op_a); continue;
+			case JMP:    ezj_ir_make_ujmp(ir, itype, instr->op_a); continue;
+			case MOVRV:  ezj_ir_make_instr(ir, itype); continue;
+			case POP:    ezj_ir_make_instr(ir, itype); continue;
+			case PUSHA:  ezj_ir_make_instr(ir, itype); continue;
+			case PUSHV:  ezj_ir_make_instr(ir, itype); continue;
+			case RET:    ezj_ir_make_ret(ir, itype); continue;
+			case FINISH: ezj_ir_make_finish(ir, itype); continue;
+			default: break;
+		}
+	}
+	return ir;
+}
+
+static void vm_init(void)
+{
+	memset(&vm, 0, sizeof(vm));
+	vm.code = vm_make_code();
+	vm.ip = vm.code->code;
+}
+// </vm>
+
+// <mod-bmags>
+static void modify_bmags_near_call(ezj_ir * ir)
+{
+	ezj_ir_instr * code = pezj_ir_get_instr_arr(ir);
+	ezj_ir_instr * instr = NULL;
+	for (size_t i = 0, end = pezj_ir_get_len(ir); i < end; ++i)
+	{
+		instr = code + i;
+		ezj_ir_set_bmag_near(instr);
+	}
+}
+static void modify_bmags_near_jmp(ezj_ir * ir)
+{
+	ezj_ir_instr * code = pezj_ir_get_instr_arr(ir);
+	ezj_ir_instr * instr = NULL;
+	for (size_t i = 0, end = pezj_ir_get_len(ir); i < end; ++i)
+	{
+		instr = code + i;
+		if (pezj_instr_has_post_branch(instr))
+			pezj_instr_set_bmag_decl_post_call_branch(instr, PEZJ_BMAG_NEAR);
+	}
+}
+static void modify_bmags_near_call_jmp(ezj_ir * ir)
+{
+	ezj_ir_instr * code = pezj_ir_get_instr_arr(ir);
+	ezj_ir_instr * instr = NULL;
+	for (size_t i = 0, end = pezj_ir_get_len(ir); i < end; ++i)
+	{
+		instr = code + i;
+		ezj_ir_set_bmag_near(instr);
+		if (pezj_instr_has_post_branch(instr))
+			pezj_instr_set_bmag_decl_post_call_branch(instr, PEZJ_BMAG_NEAR);
+	}
+}
+
+static void modify_bmags_far_call(ezj_ir * ir)
+{
+	ezj_ir_instr * code = pezj_ir_get_instr_arr(ir);
+	ezj_ir_instr * instr = NULL;
+	for (size_t i = 0, end = pezj_ir_get_len(ir); i < end; ++i)
+	{
+		instr = code + i;
+		ezj_ir_set_bmag_far(instr);
+	}
+}
+static void modify_bmags_far_jmp(ezj_ir * ir)
+{
+	ezj_ir_instr * code = pezj_ir_get_instr_arr(ir);
+	ezj_ir_instr * instr = NULL;
+	for (size_t i = 0, end = pezj_ir_get_len(ir); i < end; ++i)
+	{
+		instr = code + i;
+		if (pezj_instr_has_post_branch(instr))
+			pezj_instr_set_bmag_decl_post_call_branch(instr, PEZJ_BMAG_FAR);
+	}
+}
+static void modify_bmags_far_call_jmp(ezj_ir * ir)
+{
+	ezj_ir_instr * code = pezj_ir_get_instr_arr(ir);
+	ezj_ir_instr * instr = NULL;
+	for (size_t i = 0, end = pezj_ir_get_len(ir); i < end; ++i)
+	{
+		instr = code + i;
+		ezj_ir_set_bmag_far(instr);
+		if (pezj_instr_has_post_branch(instr))
+			pezj_instr_set_bmag_decl_post_call_branch(instr, PEZJ_BMAG_FAR);
+	}
+}
+
+static void modify_bmags_abs_call(ezj_ir * ir)
+{
+	ezj_ir_instr * code = pezj_ir_get_instr_arr(ir);
+	ezj_ir_instr * instr = NULL;
+	for (size_t i = 0, end = pezj_ir_get_len(ir); i < end; ++i)
+	{
+		instr = code + i;
+		ezj_ir_set_bmag_abs(instr);
+	}
+}
+static void modify_bmags_abs_jmp(ezj_ir * ir)
+{
+	ezj_ir_instr * code = pezj_ir_get_instr_arr(ir);
+	ezj_ir_instr * instr = NULL;
+	for (size_t i = 0, end = pezj_ir_get_len(ir); i < end; ++i)
+	{
+		instr = code + i;
+		if (pezj_instr_has_post_branch(instr))
+			pezj_instr_set_bmag_decl_post_call_branch(instr, PEZJ_BMAG_ABS);
+	}
+}
+static void modify_bmags_abs_call_jmp(ezj_ir * ir)
+{
+	ezj_ir_instr * code = pezj_ir_get_instr_arr(ir);
+	ezj_ir_instr * instr = NULL;
+	for (size_t i = 0, end = pezj_ir_get_len(ir); i < end; ++i)
+	{
+		instr = code + i;
+		ezj_ir_set_bmag_abs(instr);
+		if (pezj_instr_has_post_branch(instr))
+			pezj_instr_set_bmag_decl_post_call_branch(instr, PEZJ_BMAG_ABS);
+	}
+}
+// </mod-bmags>
+
+// <compile>
+static entry_point compile(
+	const ezj_fn_tbl * fn_tbl,
+	int * out_code_len,
+	mod_bmags mod
+)
+{
+	vm_init();
+	ezj_ir * ir = vm_compile_ir(vm_get_code());
+
+	if (mod)
+		mod(ir);
+
+	code_buff * cbf = get_rw();
+	size_t code_buff_sz = ezj_code_buff_size(pezj_ir_get_len(ir));
+	if (cbf->size < code_buff_sz)
+		err_quit("code buffer too small");
+
+	if ((*out_code_len = ezj_compile(ir, fn_tbl, cbf->code)))
+	{
+		ezj_emit(ir, fn_tbl, cbf->code);
+		make_rx(cbf->code, cbf->size);
+		return (entry_point)((void *)cbf->code);
+	}
+	return NULL;
+}
+// </compile>

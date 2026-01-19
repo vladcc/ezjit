@@ -1,0 +1,49 @@
+// <public>
+#include "ezjit_ver.ic"
+
+bool ezj_is_available(void)
+{
+	return false;
+}
+
+size_t ezj_code_buff_size(unsigned int instr_count)
+{
+	(void)instr_count;
+	return 0;
+}
+
+size_t ezj_compile(
+	ezj_ir * ir,
+	const ezj_fn_tbl * fn_tbl,
+	const unsigned char * code
+)
+{
+	(void)ir;
+	(void)fn_tbl;
+	(void)code;
+	return 0;
+}
+
+void ezj_emit(
+	const ezj_ir * ir,
+	const ezj_fn_tbl * fn_tbl,
+	unsigned char * code
+)
+{
+	(void)ir;
+	(void)fn_tbl;
+	(void)code;
+}
+
+ezj_err_code ezj_err(
+	const ezj_ir * ir,
+	unsigned int * out_err_instr_num,
+	const char ** out_err_msg
+)
+{
+	(void)ir;
+	(void)out_err_instr_num;
+	(void)out_err_msg;
+	return EZJ_EC_NONE;
+}
+// </public>

@@ -1,0 +1,42 @@
+INSTR      = INSTR_NEAR | INSTR_FAR | INSTR_ABS
+INSTR_NEAR = call_<rel32>
+INSTR_FAR  = INSTR_NEAR
+INSTR_ABS  = call_rbx_<offs32>
+
+UJMP      = UJMP_NEAR | UJMP_FAR | UJMP_ABS
+UJMP_NEAR = INSTR + jmp_<rel8>
+UJMP_FAR  = INSTR + jmp_<rel32>
+UJMP_ABS  = INSTR + mov_rax_<imm64> + jmp_rax
+
+CJMP      = CJMP_NEAR | CJMP_FAR | CJMP_ABS
+CJMP_NEAR = INSTR + test_al_al + jnz_<rel8>
+CJMP_FAR  = INSTR + test_al_al + jnz_<rel32>
+CJMP_ABS  = INSTR + test_al_al + jz_<rel8> + mov_rax_<imm64> + jmp_rax
+
+CALL      = CALL_NEAR | CALL_FAR | CALL_ABS
+CALL_NEAR = INSTR + call_<rel32>
+CALL_FAR  = CALL_NEAR
+CALL_ABS  = INSTR + mov_rax_<imm64> + call_rax
+
+RET      = RET_NEAR | RET_FAR | RET_ABS
+RET_NEAR = INSTR + ret
+RET_FAR  = RET_NEAR
+RET_ABS  = RET_NEAR
+
+FINISH      = FINISH_NEAR | FINISH_FAR | FINISH_ABS
+FINISH_NEAR = ret
+FINISH_FAR  = FINISH_NEAR
+FINISH_ABS  = FINISH_NEAR
+
+mov_rax_<imm64>   = 10
+call_<rel32>      = 5
+call_rbx_<offs32> = 6
+call_rax          = 2
+jmp_<rel8>        = 2
+jmp_<rel32>       = 5
+jmp_rax           = 2
+test_al_al        = 2
+jnz_<rel8>        = 2
+jnz_<rel32>       = 6
+jz_<rel8>         = 2
+ret               = 1

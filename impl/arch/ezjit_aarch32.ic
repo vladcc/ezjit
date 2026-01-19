@@ -1,0 +1,472 @@
+#include <stdint.h>
+#include <limits.h>
+
+// <aarch32>
+/*
+// branch target <imm24> has the range of +/- 32MB because of the x4 bias
+
+aarch32 instructions:
+Hex            Instr                                    Size
+E9 2D 48 00    push {fp, lr}                            4
+E1 A0 B0 0D    mov  fp, sp                              4
+
+E5 2D 40 04    push {r4}                                4
+E5 94 <imm12>  ldr r0, [r4, #<imm12>]                   4
+E4 9D 40 04    pop {r4}                                 4
+
+EB <imm24>     bl  <imm24>                              4
+E1 2F FF 30    blx r0                                   4
+
+EA <imm24>     b   <imm24>                              4
+E1 2F FF 10    bx  r0                                   4
+
+// place constant                     plc  r0, <imm32>  8
+E    3    0           0
+1110 0011 0000 <imm4> 0000 <imm12>    movw r0, <imm16>  4
+E    3    4           0
+1110 0011 0100 <imm4> 0000 <imm12>    movt r0, <imm16>  4
+
+// place constant                     plc  r4, <imm32>  8
+E    3    0           4
+1110 0011 0000 <imm4> 0000 <imm12>    movw r4, <imm16>  4
+E    3    4           4
+1110 0011 0100 <imm4> 0000 <imm12>    movt r4, <imm16>  4
+
+// test + branch
+E1 10 00 00    tst  r0, r0                              4
+1A <imm24>     bne <imm24>                              4
+0A <imm24>     beq <imm24>                              4
+
+// function epilogue
+E1 A0 D0 0B    mov sp, fp                               4
+E8 BD 48 00    pop {fp, lr}                             4
+E1 2F FF 1E    bx  lr                                   4 ; ret
+
+ez_jit instructions:
+Instr : INSTR
+Compos: INSTR_NEAR | INSTR_FAR | INSTR_ABS
+Size  : 4|4|8
+
+Instr : INSTR_NEAR
+Compos: bl_<imm24>:4
+Size  : 4
+
+Instr : INSTR_FAR
+Compos: INSTR_NEAR
+Size  : 4
+
+Instr : INSTR_ABS
+Compos: ldr_r0_r4_<imm12>:4 + bx_r0:4
+Size  : 8
+
+Instr : UJMP
+Compos: UJMP_NEAR | UJMP_FAR | UJMP_ABS
+Size  : (8|8|12)|(8|8|12)|(16|16|20)
+
+Instr : UJMP_NEAR
+Compos: INSTR + b_<imm24>:4
+Size  : 8|8|12
+
+Instr : UJMP_FAR
+Compos: INSTR + b_<imm24>:4
+Size  : 8|8|12
+
+Instr : UJMP_ABS
+Compos: INSTR + plc_r0_<imm32>:8 + bx_r0:4
+Size  : 16|16|20
+
+Instr : CJMP
+Compos: CJMP_NEAR | CJMP_FAR | CJMP_ABS
+Size  : (12|12|16)|(12|12|16)|(24|24|28)
+
+Instr : CJMP_NEAR
+Compos: INSTR + tst_r0_r0:4 + bne_<imm24>:4
+Size  : 12|12|16
+
+Instr : CJMP_FAR
+Compos: INSTR + tst_r0_r0:4 + bne_<imm24>:4
+Size  : 12|12|16
+
+Instr : CJMP_ABS
+Compos: INSTR + tst_r0_r0:4 + beq_<imm24>:4 + plc_r0_<imm32>:8 + bx_r0:4
+Size  : 24|24|28
+
+Instr : CALL
+Compos: CALL_NEAR | CALL_FAR | CALL_ABS
+Size  : (8|8|12)|(8|8|12)|(16|16|20)
+
+Instr : CALL_NEAR
+Compos: INSTR + bl_<imm24>:4
+Size  : 8|8|12
+
+Instr : CALL_FAR
+Compos: CALL_NEAR
+Size  : 8|8|12
+
+Instr : CALL_ABS
+Compos: INSTR + plc_r0_<imm32>:8 + bx_r0:4
+Size  : 16|16|20
+
+Instr : RET
+Compos: RET_NEAR | RET_FAR | RET_ABS
+Size  : (16|16|20)|(16|16|20)|(16|16|20)
+
+Instr : RET_NEAR
+Compos: INSTR + mov_sp_fp:4 + pop_fp_lr:4 + bx_lr:4
+Size  : 16|16|20
+
+Instr : RET_FAR
+Compos: RET_NEAR
+Size  : 16|16|20
+
+Instr : RET_ABS
+Compos: RET_NEAR
+Size  : 16|16|20
+
+Instr : FINISH
+Compos: FINISH_NEAR | FINISH_FAR | FINISH_ABS
+Size  : 16|16|16
+
+Instr : FINISH_NEAR
+Compos: pop_r4:4 + mov_sp_fp:4 + pop_fp_lr:4 + bx_lr:4
+Size  : 16
+
+Instr : FINISH_FAR
+Compos: FINISH_NEAR
+Size  : 16
+
+Instr : FINISH_ABS
+Compos: FINISH_NEAR
+Size  : 16
+*/
+
+typedef uint32_t uptr;
+typedef int32_t iptr;
+
+// <private-to-arch>
+#define SZ_PUSH_FP_LR      4
+#define SZ_MOV_FP_SP       4
+#define SZ_PUSH_R4         4
+#define SZ_LDR_R0_R4_IMM12 4
+#define SZ_POP_R4          4
+#define SZ_BL_IMM24        4
+#define SZ_BLX_R0          4
+#define SZ_B_IMM24         4
+#define SZ_BX_R0           4
+#define SZ_PLC_R0_IMM32    (4+4)
+#define SZ_PLC_R4_IMM32    (4+4)
+#define SZ_TST_R0_R0       4
+#define SZ_BNE_IMM24       4
+#define SZ_BEQ_IMM24       4
+#define SZ_MOV_SP_FP       4
+#define SZ_POP_FP_LR       4
+#define SZ_BX_LR           4
+
+#define SZ_PUSH_FRAME      (SZ_PUSH_FP_LR + SZ_MOV_FP_SP)
+#define SZ_POP_FRAME       (SZ_MOV_SP_FP + SZ_POP_FP_LR + SZ_BX_LR)
+
+#define STK_FRAME_XTRA     \
+(SZ_PUSH_FRAME + SZ_PUSH_R4 + SZ_POP_R4 + SZ_POP_FRAME)
+#define MAX_INSTR_SIZE     28
+// </private-to-arch>
+
+// <public-to-ezjit.c>
+#define RESERVE_EXTRA     256 // extra bytes in code buffer
+
+#define SZ_SET_FN_TBL_PTR (SZ_PUSH_R4 + SZ_PLC_R4_IMM32)
+#define TBL_PTR_OFFS      (SZ_PUSH_FRAME + SZ_PUSH_R4)
+#define CODE_START        (SZ_PUSH_FRAME + SZ_SET_FN_TBL_PTR)
+
+#define SZ_CALL_TARGET    SZ_PUSH_FRAME
+
+#define SZ_INSTR_FN_CALL_NEAR SZ_BL_IMM24
+#define SZ_INSTR_FN_CALL_FAR  SZ_INSTR_FN_CALL_NEAR
+#define SZ_INSTR_FN_CALL_ABS  (SZ_LDR_R0_R4_IMM12 + SZ_BLX_R0)
+
+#define SZ_UJMP_POST_NEAR SZ_B_IMM24
+#define SZ_UJMP_POST_FAR  SZ_UJMP_POST_NEAR
+#define SZ_UJMP_POST_ABS  (SZ_PLC_R0_IMM32 + SZ_BX_R0)
+
+#define SZ_CJMP_POST_NEAR (SZ_TST_R0_R0 + SZ_BNE_IMM24)
+#define SZ_CJMP_POST_FAR  SZ_CJMP_POST_NEAR
+#define SZ_CJMP_POST_ABS  \
+(SZ_TST_R0_R0 + SZ_BEQ_IMM24 + SZ_PLC_R0_IMM32 + SZ_BX_R0)
+
+#define SZ_CALL_POST_NEAR SZ_BL_IMM24
+#define SZ_CALL_POST_FAR  SZ_CALL_POST_NEAR
+#define SZ_CALL_POST_ABS  (SZ_PLC_R0_IMM32 + SZ_BLX_R0)
+
+#define SZ_RET_POST       SZ_POP_FRAME
+#define SZ_FINISH_POST    (SZ_POP_R4 + SZ_POP_FRAME)
+
+#define AVG_INSTR_SZ      18
+// </public-to-ezjit.c>
+
+// <offs>
+static inline iptr arch_get_offs(uptr dest, uptr src)
+{
+#define PREFETCH 8
+	return (iptr)(dest - (src + PREFETCH));
+#undef PREFETCH
+}
+
+static inline bool arch_is_in_range_imm24_x4(iptr dist)
+{
+#define MINUS_32MB (-33554432)
+#define PLUS_32MB 33554428
+	return (dist >= MINUS_32MB && dist <= PLUS_32MB);
+#undef MINUS_32MB
+#undef PLUS_32MB
+}
+
+static inline bool arch_is_in_range_call_near(iptr dist)
+{
+	return arch_is_in_range_imm24_x4(dist);
+}
+
+static inline bool arch_is_in_range_call_far(iptr dist)
+{
+	return arch_is_in_range_call_near(dist);
+}
+
+static inline bool arch_is_in_range_ujmp_near(iptr dist)
+{
+	return arch_is_in_range_imm24_x4(dist);
+}
+static inline bool arch_is_in_range_ujmp_far(iptr dist)
+{
+	return arch_is_in_range_ujmp_near(dist);
+}
+
+static inline bool arch_is_in_range_cjmp_near(iptr dist)
+{
+	return arch_is_in_range_imm24_x4(dist);
+}
+static inline bool arch_is_in_range_cjmp_far(iptr dist)
+{
+	return arch_is_in_range_cjmp_near(dist);
+}
+// </offs>
+
+// <write>
+static inline void arch_write_instr(code_buff * cb, uint32_t instr)
+{
+	*(uint32_t *)(cb->buff + cb->pos) = instr;
+	cb->pos += sizeof(instr);
+}
+// </write>
+// <emit>
+static inline void arch_emit_push_r4(code_buff * cb)
+{
+	// push {r4}
+	arch_write_instr(cb, 0xE52D4004);
+}
+
+static inline void arch_emit_fn_enter(code_buff * cb)
+{
+	// push {fp, lr}
+	arch_write_instr(cb, 0xE92D4800);
+	// mov fp, sp
+	arch_write_instr(cb, 0xE1A0B00D);
+}
+
+static inline void arch_emit_ldr_r0_r4_imm12(code_buff * cb, uint32_t imm12)
+{
+	// ldr r0, [r4, #<imm12>]
+	arch_write_instr(cb, 0xE5940000 | (imm12 & 0x00000FFF));
+}
+static inline void arch_emit_pop_r4(code_buff * cb)
+{
+	// pop {r4}
+	arch_write_instr(cb, 0xE49D4004);
+}
+
+static inline void arch_emit_bl_imm24(code_buff * cb, int32_t offs)
+{
+	// bl <imm24>
+	arch_write_instr(cb, 0xEB000000 | ((offs >> 2) & 0x00FFFFFF));
+}
+static inline void arch_emit_blx_r0(code_buff * cb)
+{
+	// blx r0
+	arch_write_instr(cb, 0xE12FFF30);
+}
+
+static inline void arch_emit_b_imm24(code_buff * cb, int32_t offs)
+{
+	// b <imm24>
+	arch_write_instr(cb, 0xEA000000 | ((offs >> 2) & 0x00FFFFFF));
+}
+static inline void arch_emit_bx_r0(code_buff * cb)
+{
+	// bx r0
+	arch_write_instr(cb, 0xE12FFF10);
+}
+
+static inline void arch_emit_plc_r0_imm32(code_buff * cb, uint32_t val)
+{
+	// plc  r0, <imm32> is:
+	// movw r0, <imm16>
+	// movt r0, <imm16>
+
+	uint32_t hi4 = (val << 4) & 0x000F0000;
+	uint32_t lo12 = val & 0x00000FFF;
+	arch_write_instr(cb, 0xE3000000 | hi4 | lo12);
+
+	val >>= 16;
+	hi4 = (val << 4) & 0x000F0000;
+	lo12 = val & 0x00000FFF;
+	arch_write_instr(cb, 0xE3400000 | hi4 | lo12);
+}
+
+static inline void arch_emit_plc_r4_imm32(code_buff * cb, uint32_t val)
+{
+	// plc  r4, <imm32> is:
+	// movw r4, <imm16>
+	// movt r4, <imm16>
+
+	uint32_t hi4 = (val << 4) & 0x000F0000;
+	uint32_t lo12 = val & 0x00000FFF;
+	arch_write_instr(cb, 0xE3004000 | hi4 | lo12);
+
+	val >>= 16;
+	hi4 = (val << 4) & 0x000F0000;
+	lo12 = val & 0x00000FFF;
+	arch_write_instr(cb, 0xE3404000 | hi4 | lo12);
+}
+
+static inline void arch_emit_tst_r0_r0(code_buff * cb)
+{
+	// tst r0, r0
+	arch_write_instr(cb, 0xE1100000);
+}
+static inline void arch_emit_bne_imm24(code_buff * cb, int32_t offs)
+{
+	// bne <imm24>
+	arch_write_instr(cb, 0x1A000000 | ((offs >> 2) & 0x00FFFFFF));
+}
+static inline void arch_emit_beq_imm24(code_buff * cb, int32_t offs)
+{
+	// beq <imm24>
+	arch_write_instr(cb, 0x0A000000 | ((offs >> 2) & 0x00FFFFFF));
+}
+
+static inline void arch_emit_fn_leave(code_buff * cb)
+{
+	// mov sp, fp
+	arch_write_instr(cb, 0xE1A0D00B);
+	// pop {fp, lr}
+	arch_write_instr(cb, 0xE8BD4800);
+	// bx lr
+	arch_write_instr(cb, 0xE12FFF1E);
+}
+// </emit>
+
+static void arch_cmpl_begin(code_buff * cb)
+{
+	arch_emit_fn_enter(cb);
+	arch_emit_push_r4(cb);
+	arch_emit_plc_r4_imm32(cb, 0);
+}
+
+static void arch_cmpl_call_tgt(code_buff * cb)
+{
+	arch_emit_fn_enter(cb);
+}
+
+static void arch_cmpl_instr_fn_call(
+	code_buff * cb,
+	const ezj_ir_instr * instr,
+	const ezj_fn_tbl * fn_tbl
+)
+{
+
+	uint fn_tbl_entry = pezj_instr_get_fn_tbl_entry(instr);
+	uptr fn_addr = (uptr)pezj_fn_tbl_get_entry(fn_tbl, fn_tbl_entry);
+    byte call_bmag = pezj_instr_get_bmag_disc_instr_fn_call(instr);
+	uptr src = (uptr)(cb->buff + pezj_instr_get_fn_call_offset(instr));
+
+	if (PEZJ_BMAG_ABS != call_bmag)
+	{
+		arch_emit_bl_imm24(cb, (int32_t)arch_get_offs(fn_addr, src));
+	}
+	else
+	{
+		arch_emit_ldr_r0_r4_imm12(cb, fn_tbl_entry * sizeof(ezj_void_fn));
+		arch_emit_blx_r0(cb);
+	}
+}
+
+static void arch_cmpl_ujmp(code_buff * cb, const ezj_ir_instr * instr)
+{
+
+	uptr dest = pezj_instr_get_offs_of_target(instr);
+	uptr src = pezj_instr_get_post_branch_offset(instr);
+	byte jmp_bmag = pezj_instr_get_bmag_disc_post_call_branch(instr);
+
+	if (PEZJ_BMAG_ABS != jmp_bmag)
+	{
+		arch_emit_b_imm24(cb, (int32_t)arch_get_offs(dest, src));
+	}
+	else
+	{
+		arch_emit_plc_r0_imm32(cb, (uptr)cb->buff + dest);
+		arch_emit_bx_r0(cb);
+	}
+}
+
+static void arch_cmpl_cjmp(code_buff * cb, const ezj_ir_instr * instr)
+{
+	uptr dest = pezj_instr_get_offs_of_target(instr);
+	uptr src = pezj_instr_get_post_branch_offset(instr) + SZ_TST_R0_R0;
+	byte jmp_bmag = pezj_instr_get_bmag_disc_post_call_branch(instr);
+
+	arch_emit_tst_r0_r0(cb);
+	if (PEZJ_BMAG_ABS != jmp_bmag)
+	{
+		arch_emit_bne_imm24(cb, (int32_t)arch_get_offs(dest, src));
+	}
+	else
+	{
+#define JUMP_OVER (SZ_BEQ_IMM24 + SZ_PLC_R0_IMM32 + SZ_BX_R0)
+		arch_emit_beq_imm24(cb, (int32_t)arch_get_offs(src + JUMP_OVER, src));
+#undef JUMP_OVER
+		arch_emit_plc_r0_imm32(cb, (uptr)cb->buff + dest);
+		arch_emit_bx_r0(cb);
+	}
+}
+
+static void arch_cmpl_call(code_buff * cb, const ezj_ir_instr * instr)
+{
+	uptr dest = pezj_instr_get_offs_of_target(instr);
+	uptr src = pezj_instr_get_post_branch_offset(instr);
+	byte call_bmag = pezj_instr_get_bmag_disc_post_call_branch(instr);
+
+	if (PEZJ_BMAG_ABS != call_bmag)
+	{
+		arch_emit_bl_imm24(cb, (int32_t)arch_get_offs(dest, src));
+	}
+	else
+	{
+		arch_emit_plc_r0_imm32(cb, (uptr)cb->buff + dest);
+		arch_emit_blx_r0(cb);
+	}
+}
+
+static void arch_cmpl_ret(code_buff * cb)
+{
+	arch_emit_fn_leave(cb);
+}
+
+static void arch_cmpl_finish(code_buff * cb)
+{
+	arch_emit_pop_r4(cb);
+	arch_emit_fn_leave(cb);
+}
+
+static void arch_cmpl_fn_tbl_ptr(code_buff * cb, uptr fn_tbl_addr)
+{
+	arch_emit_plc_r4_imm32(cb, (uint32_t)fn_tbl_addr);
+}
+// </aarch32>
+

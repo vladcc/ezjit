@@ -1,0 +1,5 @@
+#if !defined(EZJIT_ARCH_NONE)
+	#include "test_yes.ic"
+#else
+	#include "test_no.ic"
+#endif
