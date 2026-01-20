@@ -29,8 +29,8 @@ static code_buff * get_static_code_buff(void)
 {
 #define CODE_BUFF_SZ (1024*1024*8)
 
-	static code_buff cbuff = {0};
-	static byte code_arr[CODE_BUFF_SZ] = {0};
+	static code_buff cbuff;
+	static byte code_arr[CODE_BUFF_SZ];
 
 	int pg_sz = getpagesize();
 	int act_sz = CODE_BUFF_SZ;
@@ -152,9 +152,9 @@ static vm_code * vm_make_code(void)
 
 static ezj_ir * get_static_ezj_ir(void)
 {
-	static ezj_ir ir = {0};
+	static ezj_ir ir;
 	memset(&ir, 0, sizeof(ir));
-	static ezj_ir_instr ir_buff[NUM_INSTR] = {0};
+	static ezj_ir_instr ir_buff[NUM_INSTR];
 	memset(ir_buff, 0, sizeof(ir_buff));
 
 	size_t ir_buff_cap = NUM_INSTR;

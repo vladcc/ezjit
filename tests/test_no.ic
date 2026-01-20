@@ -1,7 +1,7 @@
 static bool test_no(void)
 {
 	check(1 == ezj_major_ver());
-	check(0 == ezj_minor_ver());
+	check(1 == ezj_minor_ver());
 
 	check(false == ezj_is_available());
 	check(0 == ezj_code_buff_size(777));

@@ -28,7 +28,7 @@ static ezj_fn_tbl tbl_near(void)
 #define OFFS_NEAR_RET     9
 #define OFFS_NEAR_FINISH  10
 
-	static ezj_fn_tbl_entry fn_arr[INSTR_END] = {0};
+	static ezj_fn_tbl_entry fn_arr[INSTR_END];
 	const code_buff * cb = get_static_code_buff();
 	const byte * code_addr = cb->code;
 
@@ -76,7 +76,7 @@ static ezj_fn_tbl tbl_far(void)
 #define OFFS_FAR_RET     (9+GB_1)
 #define OFFS_FAR_FINISH  (10+GB_1)
 
-	static ezj_fn_tbl_entry fn_arr[INSTR_END] = {0};
+	static ezj_fn_tbl_entry fn_arr[INSTR_END];
 	const code_buff * cb = get_static_code_buff();
 	const byte * code_addr = cb->code;
 
@@ -125,7 +125,7 @@ static ezj_fn_tbl tbl_abs(void)
 #define OFFS_ABS_RET     (9+GB_5)
 #define OFFS_ABS_FINISH  (10+GB_5)
 
-	static ezj_fn_tbl_entry fn_arr[INSTR_END] = {0};
+	static ezj_fn_tbl_entry fn_arr[INSTR_END];
 	const code_buff * cb = get_static_code_buff();
 	const byte * code_addr = cb->code;
 

@@ -29,8 +29,8 @@ static code_buff * get_code_buff(void)
 {
 #define CODE_BUFF_SZ (1024*1024*8)
 
-	static code_buff cbuff = {0};
-	static byte code_arr[CODE_BUFF_SZ] = {0};
+	static code_buff cbuff;
+	static byte code_arr[CODE_BUFF_SZ];
 
 	int pg_sz = getpagesize();
 	int act_sz = CODE_BUFF_SZ;
@@ -420,7 +420,7 @@ static ezj_fn_tbl fn_tbl = {fn_arr, TBL_LEN};
 
 static ezj_ir * vm_compile_ir(vm_code * prog)
 {
-	static ezj_ir_instr ezj_ir_buff[NUM_INSTR] = {0};
+	static ezj_ir_instr ezj_ir_buff[NUM_INSTR];
 	memset(ezj_ir_buff, 0, sizeof(ezj_ir_buff));
 
 	size_t ezj_ir_buff_cap = NUM_INSTR;
@@ -428,7 +428,7 @@ static ezj_ir * vm_compile_ir(vm_code * prog)
 	if (ezj_ir_buff_cap * sizeof(ezj_ir_instr) < ir_buff_sz)
 		err_quit("ir buffer too small");
 
-	static ezj_ir ezj_ir_ = {0};
+	static ezj_ir ezj_ir_;
 	ezj_ir * ezj_ir = &ezj_ir_;
 
 	*ezj_ir = ezj_ir_init(ezj_ir_buff, ezj_ir_buff_cap);

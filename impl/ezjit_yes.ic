@@ -357,7 +357,8 @@ static void yes_emit_fn_tbl(code_buff * cb, const ezj_fn_tbl * fn_tbl)
 
 static inline void yes_clear_cache(code_buff * cb)
 {
-	__builtin___clear_cache((void *)cb->buff, (void *)(cb->buff + cb->pos));
+	// (char *) for clang compatibility even though it should be (void *)
+	__builtin___clear_cache((char *)(cb->buff), (char *)(cb->buff + cb->pos));
 }
 
 static void yes_emit_code(

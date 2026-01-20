@@ -43,6 +43,7 @@
 
 #include "impl/ezjit_priv_decl.h"
 
+#include <string.h>
 #include <stddef.h>
 #include <stdbool.h>
 
@@ -118,7 +119,9 @@ static inline size_t ezj_ir_buff_size(unsigned int instr_count)
 // Returns an initialized ezj_ir.
 static inline ezj_ir ezj_ir_init(ezj_ir_instr * ir_buff, unsigned int cap)
 {
-	ezj_ir ir = {0};
+	ezj_ir ir;
+	// C/C++ portable 0 initialization
+	memset(&ir, 0, sizeof(ir));
 	ir.instr_arr = ir_buff;
 	ir.cap = cap;
 	return ir;

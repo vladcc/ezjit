@@ -6,6 +6,6 @@ unsigned int ezj_major_ver(void)
 
 unsigned int ezj_minor_ver(void)
 {
-	return 0;
+	return 1;
 }
 // </version>

@@ -84,7 +84,7 @@ static bool test_compile_(
 static bool test_version(void)
 {
 	check(1 == ezj_major_ver());
-	check(0 == ezj_minor_ver());
+	check(1 == ezj_minor_ver());
 	return true;
 }
 

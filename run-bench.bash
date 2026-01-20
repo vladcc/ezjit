@@ -2,7 +2,7 @@
 
 function run_test
 {
-	local CMPL="gcc ezjit.c examples/example-${1}.c -o ${1}.bin -I. -Wall $4 -fomit-frame-pointer"
+	local CMPL="gcc ezjit.c examples/example-${1}.c -o ${1}.bin -I. -Wall -Wextra $4 -fomit-frame-pointer"
 
 	cat /etc/os-release | tr -d '"' | grep PRETTY_ | awk -F'=' '{print $NF}'
 	uname -srv
